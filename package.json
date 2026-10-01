@@ -3,7 +3,7 @@
   "displayName": "stud",
   "description": "Editor wrapper that runs a user-installed stud executable. It does not replace the CLI or call Jira, Linear, GitHub, or GitLab.",
   "icon": "resources/icon.png",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "studapart",
   "license": "MIT",
   "repository": {
@@ -21,7 +21,11 @@
     "onCommand:stud.validate",
     "onCommand:stud.openGlobalConfig",
     "onCommand:stud.openProjectConfig",
-    "onCommand:stud.revealConfigLocations"
+    "onCommand:stud.revealConfigLocations",
+    "onCommand:stud.showConfig",
+    "onCommand:stud.validateConfig",
+    "onCommand:stud.showWorkItem",
+    "onCommand:stud.showPullRequestComments"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -49,6 +53,26 @@
       {
         "command": "stud.revealConfigLocations",
         "title": "Reveal Config Locations",
+        "category": "stud"
+      },
+      {
+        "command": "stud.showConfig",
+        "title": "Show Config",
+        "category": "stud"
+      },
+      {
+        "command": "stud.validateConfig",
+        "title": "Validate Config",
+        "category": "stud"
+      },
+      {
+        "command": "stud.showWorkItem",
+        "title": "Show Work Item",
+        "category": "stud"
+      },
+      {
+        "command": "stud.showPullRequestComments",
+        "title": "Show Pull Request Comments",
         "category": "stud"
       }
     ],

@@ -33,6 +33,15 @@ import {
   type CandidateState,
 } from './discovery';
 import {
+  SHOW_CONFIG_COMMAND,
+  SHOW_PULL_REQUEST_COMMENTS_COMMAND,
+  SHOW_WORK_ITEM_COMMAND,
+  VALIDATE_CONFIG_COMMAND,
+  interpretAgentRun,
+  planAgentWorkspace,
+  planAllowlistedRun,
+} from './agentRun';
+import {
   CHECK_VERSION_COMMAND,
   EXECUTABLE_PATH_SETTING,
   VERSION_ARGS,
@@ -41,6 +50,8 @@ import {
 
 const OUTPUT_CHANNEL_NAME = 'stud';
 const COMMAND_TIMEOUT_MS = 10_000;
+const AGENT_RUN_TIMEOUT_MS = 90_000;
+const MAX_AGENT_OUTPUT_BYTES = 1_048_576;
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
@@ -53,6 +64,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(OPEN_GLOBAL_CONFIG_COMMAND, () => runOpenGlobalConfig(output)),
     vscode.commands.registerCommand(OPEN_PROJECT_CONFIG_COMMAND, () => runOpenProjectConfig(output)),
     vscode.commands.registerCommand(REVEAL_CONFIG_LOCATIONS_COMMAND, () => runRevealConfigLocations(output)),
+    vscode.commands.registerCommand(SHOW_CONFIG_COMMAND, () => runAllowlisted(output, SHOW_CONFIG_COMMAND)),
+    vscode.commands.registerCommand(VALIDATE_CONFIG_COMMAND, () => runAllowlisted(output, VALIDATE_CONFIG_COMMAND)),
+    vscode.commands.registerCommand(SHOW_PULL_REQUEST_COMMENTS_COMMAND, () => runAllowlisted(output, SHOW_PULL_REQUEST_COMMENTS_COMMAND)),
+    vscode.commands.registerCommand(SHOW_WORK_ITEM_COMMAND, () => runShowWorkItem(output)),
   );
 }
 
@@ -71,7 +86,7 @@ function runCheckVersion(output: vscode.OutputChannel): Promise<void> {
 function runValidate(output: vscode.OutputChannel): Promise<void> {
   return withStud(output, (executable) => {
     output.appendLine(`Running ${executable} ${AGENT_HELP_ARGS.join(' ')}`);
-    return runAgentHelp(executable).then((result) => {
+    return runAgent(executable, AGENT_HELP_ARGS, AGENT_HELP_STDIN, COMMAND_TIMEOUT_MS).then((result) => {
       const formatted = interpretAgentHelp(result);
       report(output, formatted.detail, formatted.ok ? 'info' : 'error', formatted.summary);
     });
@@ -255,18 +270,73 @@ function runExecutable(
   });
 }
 
-function runAgentHelp(executable: string): Promise<{ stdout: string; stderr: string; errorMessage?: string }> {
+function runAllowlisted(output: vscode.OutputChannel, commandId: string, key?: string | null): Promise<void> {
+  const plan = planAllowlistedRun(commandId, key);
+  if (plan.kind === 'rejected') {
+    report(output, plan.summary, 'warning', plan.summary);
+    return Promise.resolve();
+  }
+  return chooseAgentWorkspace(output).then((folder) => {
+    if (folder === undefined) {
+      return;
+    }
+    return withStud(output, (executable) => {
+      output.appendLine(`Running ${executable} ${plan.args.join(' ')} in ${folder}`);
+      return runAgent(executable, plan.args, plan.stdin, AGENT_RUN_TIMEOUT_MS, folder).then((result) => {
+        const formatted = interpretAgentRun({ label: plan.label, ...result });
+        report(output, formatted.detail, formatted.level, formatted.summary);
+      });
+    });
+  });
+}
+
+function chooseAgentWorkspace(output: vscode.OutputChannel): Promise<string | undefined> {
+  const selection = planAgentWorkspace(workspaceFolders());
+  if (selection.kind === 'none') {
+    report(output, selection.summary, 'warning', selection.summary);
+    return Promise.resolve(undefined);
+  }
+  if (selection.kind === 'one') {
+    return Promise.resolve(selection.folder);
+  }
+  return Promise.resolve(vscode.window.showQuickPick(selection.folders, { placeHolder: 'Workspace folder for stud' })).then(
+    (picked) => picked,
+  );
+}
+
+function runShowWorkItem(output: vscode.OutputChannel): Promise<void> {
+  return Promise.resolve(
+    vscode.window.showInputBox({ prompt: 'Work item key', placeHolder: 'SCI-111' }),
+  ).then((key) => {
+    if (key === undefined) {
+      return;
+    }
+    return runAllowlisted(output, SHOW_WORK_ITEM_COMMAND, key);
+  });
+}
+
+function runAgent(
+  executable: string,
+  args: readonly string[],
+  stdin: string,
+  timeoutMs: number,
+  cwd?: string,
+): Promise<{ stdout: string; stderr: string; errorMessage?: string }> {
   return new Promise((resolve) => {
-    const child = spawn(executable, [...AGENT_HELP_ARGS], { windowsHide: true });
+    const child = spawn(executable, [...args], { windowsHide: true, cwd });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (errorMessage?: string) => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
       resolve({
         stdout: Buffer.concat(stdout).toString('utf8'),
         stderr: Buffer.concat(stderr).toString('utf8'),
@@ -275,13 +345,34 @@ function runAgentHelp(executable: string): Promise<{ stdout: string; stderr: str
     };
     const timer = setTimeout(() => {
       child.kill();
-      finish('stud help --agent timed out.');
-    }, COMMAND_TIMEOUT_MS);
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      finish(`${args.join(' ')} timed out.`);
+    }, timeoutMs);
+    const take = (chunks: Buffer[], seen: number, chunk: Buffer): number => {
+      if (settled) {
+        return seen;
+      }
+      const next = seen + chunk.length;
+      if (next > MAX_AGENT_OUTPUT_BYTES) {
+        child.kill();
+        finish(`${args.join(' ')} output exceeded ${MAX_AGENT_OUTPUT_BYTES} bytes.`);
+        return next;
+      }
+      chunks.push(chunk);
+      return next;
+    };
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBytes = take(stdout, stdoutBytes, chunk);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrBytes = take(stderr, stderrBytes, chunk);
+    });
+    child.stdin.on('error', () => undefined);
+    child.stdout.on('error', () => undefined);
+    child.stderr.on('error', () => undefined);
     child.on('error', (error) => finish(error.message));
-    child.on('close', (code) => finish(code === 0 ? undefined : `stud help --agent exited with code ${code ?? 'unknown'}.`));
-    child.stdin.write(AGENT_HELP_STDIN);
+    child.on('close', (code) => finish(code === 0 ? undefined : `${args.join(' ')} exited with code ${code ?? 'unknown'}.`));
+    child.stdin.write(stdin);
     child.stdin.end();
   });
 }
