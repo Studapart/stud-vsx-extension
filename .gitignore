@@ -1,1 +1,5 @@
 .cursor
+node_modules/
+out/
+*.vsix
+.vscode-test/
