@@ -35,11 +35,19 @@ import {
 import {
   SHOW_CONFIG_COMMAND,
   SHOW_PULL_REQUEST_COMMENTS_COMMAND,
+  COMMIT_COMMAND,
+  PUSH_COMMAND,
   SHOW_WORK_ITEM_COMMAND,
+  SUBMIT_COMMAND,
+  SYNC_COMMAND,
   VALIDATE_CONFIG_COMMAND,
   interpretAgentRun,
   planAgentWorkspace,
   planAllowlistedRun,
+  AGENT_ALREADY_RUNNING,
+  AGENT_WORKSPACE_PICK_CANCELLED,
+  planWorkflow,
+  type AgentRunPlan,
 } from './agentRun';
 import {
   CHECK_VERSION_COMMAND,
@@ -49,6 +57,7 @@ import {
 } from './versionCheck';
 
 const OUTPUT_CHANNEL_NAME = 'stud';
+let agentBusy = false;
 const COMMAND_TIMEOUT_MS = 10_000;
 const AGENT_RUN_TIMEOUT_MS = 90_000;
 const MAX_AGENT_OUTPUT_BYTES = 1_048_576;
@@ -65,9 +74,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(OPEN_PROJECT_CONFIG_COMMAND, () => runOpenProjectConfig(output)),
     vscode.commands.registerCommand(REVEAL_CONFIG_LOCATIONS_COMMAND, () => runRevealConfigLocations(output)),
     vscode.commands.registerCommand(SHOW_CONFIG_COMMAND, () => runAllowlisted(output, SHOW_CONFIG_COMMAND)),
-    vscode.commands.registerCommand(VALIDATE_CONFIG_COMMAND, () => runAllowlisted(output, VALIDATE_CONFIG_COMMAND)),
+    vscode.commands.registerCommand(VALIDATE_CONFIG_COMMAND, () => runWorkflow(output, VALIDATE_CONFIG_COMMAND)),
     vscode.commands.registerCommand(SHOW_PULL_REQUEST_COMMENTS_COMMAND, () => runAllowlisted(output, SHOW_PULL_REQUEST_COMMENTS_COMMAND)),
     vscode.commands.registerCommand(SHOW_WORK_ITEM_COMMAND, () => runShowWorkItem(output)),
+    vscode.commands.registerCommand(SYNC_COMMAND, () => runWorkflow(output, SYNC_COMMAND)),
+    vscode.commands.registerCommand(COMMIT_COMMAND, () => runWorkflow(output, COMMIT_COMMAND)),
+    vscode.commands.registerCommand(PUSH_COMMAND, () => runWorkflow(output, PUSH_COMMAND)),
+    vscode.commands.registerCommand(SUBMIT_COMMAND, () => runWorkflow(output, SUBMIT_COMMAND)),
   );
 }
 
@@ -270,23 +283,65 @@ function runExecutable(
   });
 }
 
-function runAllowlisted(output: vscode.OutputChannel, commandId: string, key?: string | null): Promise<void> {
-  const plan = planAllowlistedRun(commandId, key);
+function runWorkflow(output: vscode.OutputChannel, commandId: string): Promise<void> {
+  const plan = planWorkflow(commandId);
   if (plan.kind === 'rejected') {
-    report(output, plan.summary, 'warning', plan.summary);
-    return Promise.resolve();
+    return runPlanned(output, plan);
   }
   return chooseAgentWorkspace(output).then((folder) => {
     if (folder === undefined) {
       return;
     }
+    if (plan.confirmation === null) {
+      return runPlanned(output, plan, folder);
+    }
+    const confirmation = `${plan.confirmation} Folder: ${folder}`;
+    return Promise.resolve(vscode.window.showWarningMessage(confirmation, { modal: true }, 'Run')).then((choice) => {
+      if (choice !== 'Run') {
+        return;
+      }
+      return runPlanned(output, plan, folder);
+    });
+  });
+}
+
+function runAllowlisted(output: vscode.OutputChannel, commandId: string, key?: string | null): Promise<void> {
+  return runPlanned(output, planAllowlistedRun(commandId, key));
+}
+
+function runPlanned(
+  output: vscode.OutputChannel,
+  plan: AgentRunPlan | ReturnType<typeof planWorkflow>,
+  folder?: string,
+): Promise<void> {
+  if (plan.kind === 'rejected') {
+    report(output, plan.summary, 'warning', plan.summary);
+    return Promise.resolve();
+  }
+  if (agentBusy) {
+    report(output, AGENT_ALREADY_RUNNING, 'warning', AGENT_ALREADY_RUNNING);
+    return Promise.resolve();
+  }
+  const start = (workspace: string): Promise<void> => {
+    agentBusy = true;
     return withStud(output, (executable) => {
-      output.appendLine(`Running ${executable} ${plan.args.join(' ')} in ${folder}`);
-      return runAgent(executable, plan.args, plan.stdin, AGENT_RUN_TIMEOUT_MS, folder).then((result) => {
+      output.appendLine(`Running ${executable} ${plan.args.join(' ')} in ${workspace}`);
+      return runAgent(executable, plan.args, plan.stdin, AGENT_RUN_TIMEOUT_MS, workspace).then((result) => {
         const formatted = interpretAgentRun({ label: plan.label, ...result });
         report(output, formatted.detail, formatted.level, formatted.summary);
       });
+    }).finally(() => {
+      agentBusy = false;
     });
+  };
+  if (folder !== undefined) {
+    return start(folder);
+  }
+  return chooseAgentWorkspace(output).then((workspace) => {
+    if (workspace === undefined) {
+      return;
+    }
+    return start(workspace);
   });
 }
 
@@ -300,7 +355,12 @@ function chooseAgentWorkspace(output: vscode.OutputChannel): Promise<string | un
     return Promise.resolve(selection.folder);
   }
   return Promise.resolve(vscode.window.showQuickPick(selection.folders, { placeHolder: 'Workspace folder for stud' })).then(
-    (picked) => picked,
+    (picked) => {
+      if (picked === undefined) {
+        report(output, AGENT_WORKSPACE_PICK_CANCELLED, 'warning', AGENT_WORKSPACE_PICK_CANCELLED);
+      }
+      return picked;
+    },
   );
 }
 
