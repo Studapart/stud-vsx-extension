@@ -3,7 +3,7 @@
   "displayName": "stud",
   "description": "Editor wrapper that runs a user-installed stud executable. It does not replace the CLI or call Jira, Linear, GitHub, or GitLab.",
   "icon": "resources/icon.png",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "studapart",
   "license": "MIT",
   "repository": {
@@ -18,7 +18,10 @@
   ],
   "activationEvents": [
     "onCommand:stud.checkVersion",
-    "onCommand:stud.validate"
+    "onCommand:stud.validate",
+    "onCommand:stud.openGlobalConfig",
+    "onCommand:stud.openProjectConfig",
+    "onCommand:stud.revealConfigLocations"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -31,6 +34,21 @@
       {
         "command": "stud.validate",
         "title": "Validate stud",
+        "category": "stud"
+      },
+      {
+        "command": "stud.openGlobalConfig",
+        "title": "Open Global Config",
+        "category": "stud"
+      },
+      {
+        "command": "stud.openProjectConfig",
+        "title": "Open Project Config",
+        "category": "stud"
+      },
+      {
+        "command": "stud.revealConfigLocations",
+        "title": "Reveal Config Locations",
         "category": "stud"
       }
     ],
@@ -53,7 +71,8 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test out/*.test.js"
+    "test": "npm run compile && node --test out/*.test.js",
+    "package": "scripts/package-vsix.sh"
   },
   "devDependencies": {
     "@types/node": "^18.19.80",

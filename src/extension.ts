@@ -2,8 +2,25 @@ import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter } from 'node:path';
+import { delimiter, sep } from 'node:path';
 import * as vscode from 'vscode';
+import {
+  OPEN_GLOBAL_CONFIG_COMMAND,
+  OPEN_PROJECT_CONFIG_COMMAND,
+  REVEAL_CONFIG_LOCATIONS_COMMAND,
+  WORKSPACE_PICK_CANCELLED,
+  classifyAccess,
+  describeConfigLocations,
+  describeUnreadable,
+  globalConfigPath,
+  planGlobalOpen,
+  planProjectOpen,
+  projectConfigPath,
+  selectWorkspace,
+  type AccessClassification,
+  type ConfigFilePlan,
+  type FilePresence,
+} from './configAccess';
 import {
   AGENT_HELP_ARGS,
   AGENT_HELP_STDIN,
@@ -33,6 +50,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(CHECK_VERSION_COMMAND, () => runCheckVersion(output)),
     vscode.commands.registerCommand(VALIDATE_COMMAND, () => runValidate(output)),
+    vscode.commands.registerCommand(OPEN_GLOBAL_CONFIG_COMMAND, () => runOpenGlobalConfig(output)),
+    vscode.commands.registerCommand(OPEN_PROJECT_CONFIG_COMMAND, () => runOpenProjectConfig(output)),
+    vscode.commands.registerCommand(REVEAL_CONFIG_LOCATIONS_COMMAND, () => runRevealConfigLocations(output)),
   );
 }
 
@@ -56,6 +76,114 @@ function runValidate(output: vscode.OutputChannel): Promise<void> {
       report(output, formatted.detail, formatted.ok ? 'info' : 'error', formatted.summary);
     });
   });
+}
+
+function runOpenGlobalConfig(output: vscode.OutputChannel): Promise<void> {
+  const home = homeDirectory();
+  const path = globalConfigPath(home, sep);
+  return filePresence(path).then((check) => {
+    if (check.kind === 'unreadable') {
+      return reportUnreadable(output, path, check.code);
+    }
+    return applyConfigPlan(output, planGlobalOpen({ homeDir: home, separator: sep, presence: check.kind }));
+  });
+}
+
+function runOpenProjectConfig(output: vscode.OutputChannel): Promise<void> {
+  const selection = selectWorkspace(workspaceFolders());
+  if (selection.kind === 'none') {
+    report(output, selection.summary, 'warning', selection.summary);
+    return Promise.resolve();
+  }
+  if (selection.kind === 'one') {
+    return openProjectConfig(output, selection.folder);
+  }
+  return Promise.resolve(vscode.window.showQuickPick(selection.folders, { placeHolder: 'Select a workspace folder' })).then((picked) => {
+    if (picked === undefined) {
+      report(output, WORKSPACE_PICK_CANCELLED, 'warning', WORKSPACE_PICK_CANCELLED);
+      return;
+    }
+    return openProjectConfig(output, picked);
+  });
+}
+
+function openProjectConfig(output: vscode.OutputChannel, folder: string): Promise<void> {
+  const path = projectConfigPath(folder, sep);
+  return filePresence(path).then((check) => {
+    if (check.kind === 'unreadable') {
+      return reportUnreadable(output, path, check.code);
+    }
+    return applyConfigPlan(output, planProjectOpen({ workspaceDir: folder, separator: sep, presence: check.kind }));
+  });
+}
+
+function runRevealConfigLocations(output: vscode.OutputChannel): Promise<void> {
+  const folders = workspaceFolders();
+  const home = homeDirectory();
+  const globalPath = globalConfigPath(home, sep);
+  const projectPaths = folders.map((folder) => projectConfigPath(folder, sep));
+  return Promise.all([filePresence(globalPath), ...projectPaths.map((path) => filePresence(path))]).then((checks) => {
+    const described = describeConfigLocations({
+      workspaceOpen: folders.length > 0,
+      locations: [
+        { role: 'global', path: globalPath, presence: presenceOf(checks[0]) },
+        ...projectPaths.map((path, index) => ({ role: 'project' as const, path, presence: presenceOf(checks[index + 1]) })),
+      ],
+    });
+    report(output, described.detail, 'info', described.summary);
+  });
+}
+
+function homeDirectory(): string {
+  try {
+    return homedir();
+  } catch {
+    return '';
+  }
+}
+
+function presenceOf(check: AccessClassification | { readonly kind: 'present' } | undefined): FilePresence {
+  if (check === undefined || check.kind === 'missing') {
+    return 'missing';
+  }
+  return check.kind === 'present' ? 'present' : 'unreadable';
+}
+
+function workspaceFolders(): string[] {
+  return vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
+}
+
+function applyConfigPlan(output: vscode.OutputChannel, plan: ConfigFilePlan): Promise<void> {
+  if (plan.kind === 'missing') {
+    report(output, plan.summary, 'warning', plan.summary);
+    return Promise.resolve();
+  }
+  return Promise.resolve(vscode.workspace.openTextDocument(vscode.Uri.file(plan.path)))
+    .then((document) => vscode.window.showTextDocument(document))
+    .then(
+      () => {
+        report(output, plan.path, 'info', plan.summary);
+      },
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        report(output, message, 'error', `Could not open ${plan.path}.`);
+      },
+    );
+}
+
+function reportUnreadable(output: vscode.OutputChannel, path: string, code: string): void {
+  const described = describeUnreadable(path, code);
+  report(output, described.detail, 'error', described.summary);
+}
+
+function filePresence(file: string): Promise<AccessClassification | { readonly kind: 'present' }> {
+  if (file === '') {
+    return Promise.resolve({ kind: 'missing' });
+  }
+  return access(file, constants.F_OK).then(
+    () => ({ kind: 'present' as const }),
+    (error: NodeJS.ErrnoException) => classifyAccess(error.code),
+  );
 }
 
 function withStud(output: vscode.OutputChannel, run: (executable: string) => Promise<void>): Promise<void> {
