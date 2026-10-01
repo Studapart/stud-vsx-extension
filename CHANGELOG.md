@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Run allowlisted stud agent commands in the workspace folder so stud can read `.git/stud.config`.
+- Run an allowlist of read-only stud agent commands (`config:show`, `config:validate`, `items:show`, `pr:comments`) and show success, CLI errors, and malformed output. Anything else is refused.
 - Open or reveal the global stud config (`~/.config/stud/config.yml`) and the project stud config (`.git/stud.config`) without creating files or printing their contents.
 - Use the stud mark as the extension icon, on a white background. The transparent variant is kept in `resources/icon-a.png`.
 - Add `npm run package -- --output-file stud-x.y.z.vsix` to build the VSIX; it sets the manifest version from the file name and needs Node.js 22+.
