@@ -1,0 +1,51 @@
+{
+  "name": "stud",
+  "displayName": "stud",
+  "description": "Editor wrapper that runs a user-installed stud executable. It does not replace the CLI or call Jira, Linear, GitHub, or GitLab.",
+  "version": "0.0.1",
+  "publisher": "studapart",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Studapart/stud-vsx-extension.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:stud.checkVersion"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "stud.checkVersion",
+        "title": "Check Version",
+        "category": "stud"
+      }
+    ],
+    "configuration": {
+      "title": "stud",
+      "properties": {
+        "stud.executablePath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the user-installed `stud` executable. This version does not search `PATH` or download a runtime."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test out/versionCheck.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.80",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.6.3"
+  }
+}
