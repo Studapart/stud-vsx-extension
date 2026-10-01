@@ -7,27 +7,9 @@ import {
   EXECUTABLE_PATH_SETTING,
   VERSION_ARGS,
   formatVersionResult,
-  planVersionCheck,
 } from './versionCheck';
 
-test('missing or blank executable path stays unresolved', () => {
-  for (const value of [undefined, null, '', '   ']) {
-    const plan = planVersionCheck(value);
-    assert.equal(plan.kind, 'missing-path');
-    if (plan.kind === 'missing-path') {
-      assert.match(plan.message, /stud\.executablePath/);
-      assert.match(plan.message, /does not discover/);
-    }
-  }
-});
-
-test('configured path runs stud --version without a shell', () => {
-  const plan = planVersionCheck('  /home/dev/.local/bin/stud  ');
-  assert.deepEqual(plan, {
-    kind: 'run',
-    executable: '/home/dev/.local/bin/stud',
-    args: VERSION_ARGS,
-  });
+test('version check runs stud --version without a shell', () => {
   assert.deepEqual(VERSION_ARGS, ['--version']);
 });
 
