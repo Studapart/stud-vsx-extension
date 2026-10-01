@@ -25,7 +25,11 @@
     "onCommand:stud.showConfig",
     "onCommand:stud.validateConfig",
     "onCommand:stud.showWorkItem",
-    "onCommand:stud.showPullRequestComments"
+    "onCommand:stud.showPullRequestComments",
+    "onCommand:stud.sync",
+    "onCommand:stud.commit",
+    "onCommand:stud.push",
+    "onCommand:stud.submit"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -73,6 +77,26 @@
       {
         "command": "stud.showPullRequestComments",
         "title": "Show Pull Request Comments",
+        "category": "stud"
+      },
+      {
+        "command": "stud.sync",
+        "title": "Sync",
+        "category": "stud"
+      },
+      {
+        "command": "stud.commit",
+        "title": "Commit",
+        "category": "stud"
+      },
+      {
+        "command": "stud.push",
+        "title": "Push",
+        "category": "stud"
+      },
+      {
+        "command": "stud.submit",
+        "title": "Submit",
         "category": "stud"
       }
     ],

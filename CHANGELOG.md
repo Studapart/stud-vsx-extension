@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add palette workflows for stud sync, commit, push, and submit. Commit, push, and submit ask for confirmation and send `{}`, so staging, the message, and the issue tracker stay with stud.
 - Run allowlisted stud agent commands in the workspace folder so stud can read `.git/stud.config`.
 - Run an allowlist of read-only stud agent commands (`config:show`, `config:validate`, `items:show`, `pr:comments`) and show success, CLI errors, and malformed output. Anything else is refused.
 - Open or reveal the global stud config (`~/.config/stud/config.yml`) and the project stud config (`.git/stud.config`) without creating files or printing their contents.
