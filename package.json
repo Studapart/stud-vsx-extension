@@ -2,6 +2,7 @@
   "name": "stud",
   "displayName": "stud",
   "description": "Editor wrapper that runs a user-installed stud executable. It does not replace the CLI or call Jira, Linear, GitHub, or GitLab.",
+  "icon": "resources/icon.png",
   "version": "0.0.1",
   "publisher": "studapart",
   "license": "MIT",
@@ -16,7 +17,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:stud.checkVersion"
+    "onCommand:stud.checkVersion",
+    "onCommand:stud.validate"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -24,6 +26,11 @@
       {
         "command": "stud.checkVersion",
         "title": "Check Version",
+        "category": "stud"
+      },
+      {
+        "command": "stud.validate",
+        "title": "Validate stud",
         "category": "stud"
       }
     ],
@@ -33,7 +40,12 @@
         "stud.executablePath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path to the user-installed `stud` executable. This version does not search `PATH` or download a runtime."
+          "markdownDescription": "Absolute path to the user-installed `stud` executable. When this is empty and `stud.searchPath` is on, the extension looks on `PATH` and then in `~/.local/bin/stud`. Detection does not change this setting and does not install stud."
+        },
+        "stud.searchPath": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When `stud.executablePath` is empty, look for `stud` on `PATH` and then in `~/.local/bin/stud`. An explicit path is always used as given."
         }
       }
     }
@@ -41,7 +53,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test out/versionCheck.test.js"
+    "test": "npm run compile && node --test out/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^18.19.80",
