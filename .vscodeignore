@@ -1,5 +1,7 @@
 .cursor/**
 .vscode/**
+scripts/**
+resources/icon-a.png
 src/**
 **/*.map
 **/*.ts
