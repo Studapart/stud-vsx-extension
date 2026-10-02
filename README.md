@@ -21,7 +21,7 @@ Extension id: `studapart.stud`.
 
 This extension is a thin wrapper. It is not a CLI replacement.
 
-- It does not bundle, download, or install a stud runtime. Install stud yourself so it is on `PATH` or at `~/.local/bin/stud`, or set `stud.executablePath`.
+- It does not bundle, download, or install a stud runtime. Install stud yourself so it is on `PATH` or at `~/.local/bin/stud`, or set `stud.executablePath`. A later managed portable install is described in [`documentation/sci-113-managed-runtime.md`](documentation/sci-113-managed-runtime.md) and is not part of this version.
 - It does not call Jira, Linear, GitHub, or GitLab, and it does not run `git` or `gh` itself. Reads and the palette workflows go through `stud --agent`. A local stud install is required.
 - **stud: Sync**, **stud: Commit**, **stud: Push**, and **stud: Submit** do not run until you confirm. Commands that are not on the palette are refused.
 - It does not create or edit stud config files. Tokens in those files are not copied into the output channel.

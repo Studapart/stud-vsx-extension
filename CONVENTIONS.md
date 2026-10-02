@@ -7,7 +7,7 @@ Coding, testing, and architecture standards for the `studapart.stud` editor exte
 - The extension is a wrapper around a **user-installed** `stud` executable. The CLI remains the source of truth for Git, Jira, Linear, GitHub, and GitLab behavior.
 - Never call Jira, Linear, GitHub, or GitLab HTTP APIs from the extension. Never reimplement a stud workflow in TypeScript.
 - Never vendor, copy, or translate `stud-cli` PHP code.
-- Do not bundle or download a stud runtime (deferred to SCI-113). Discovery is the explicit `stud.executablePath`, then `PATH`, then `~/.local/bin/stud`. Do not install stud from the extension.
+- Do not bundle or download a stud runtime. SCI-113 records the later portable-install contract in `documentation/sci-113-managed-runtime.md` and does not add a downloader. Discovery is the explicit `stud.executablePath`, then `PATH`, then `~/.local/bin/stud`. Do not install stud from the extension.
 - Machine contract with stud: spawn the executable with `--agent`, send one JSON object on stdin, read one JSON object on stdout. `success: false` carries an `error` string. Command schemas come from `stud help --agent`, not from hard-coded keys.
 
 ## Stack
