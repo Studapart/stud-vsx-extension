@@ -15,7 +15,6 @@ const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   [SHOW_CONFIG_COMMAND]: ['config:show', '--agent'],
   [VALIDATE_CONFIG_COMMAND]: ['config:validate', '--agent'],
   [SHOW_PULL_REQUEST_COMMENTS_COMMAND]: ['pr:comments', '--agent'],
-  [SHOW_WORK_ITEM_COMMAND]: ['items:show', '--agent'],
 };
 
 export type AgentWorkspacePlan =
@@ -55,6 +54,7 @@ const WORKFLOWS: Readonly<Record<string, { readonly args: readonly string[]; rea
     args: ['submit', '--agent'],
     confirmation: 'Submit with stud? This can push the branch and open a pull request.',
   },
+  [SHOW_WORK_ITEM_COMMAND]: { args: ['items:show', '--agent'], confirmation: null },
 };
 
 export type WorkflowPlan =
@@ -85,24 +85,12 @@ export type AgentRunPlan =
   | { readonly kind: 'run'; readonly label: string; readonly args: readonly string[]; readonly stdin: string }
   | { readonly kind: 'rejected'; readonly summary: string };
 
-export function planAllowlistedRun(commandId: string, key?: string | null): AgentRunPlan {
+export function planAllowlistedRun(commandId: string): AgentRunPlan {
   const args = ALLOWED[commandId];
   if (args === undefined) {
     return { kind: 'rejected', summary: 'That action is not an allowlisted read-only stud command.' };
   }
-  if (commandId !== SHOW_WORK_ITEM_COMMAND) {
-    return { kind: 'run', label: args[0] ?? commandId, args, stdin: AGENT_STDIN };
-  }
-  const trimmed = key?.trim() ?? '';
-  if (trimmed === '') {
-    return { kind: 'rejected', summary: 'Enter a work item key. The extension does not choose an issue tracker.' };
-  }
-  return {
-    kind: 'run',
-    label: args[0] ?? commandId,
-    args,
-    stdin: JSON.stringify({ key: trimmed }),
-  };
+  return { kind: 'run', label: args[0] ?? commandId, args, stdin: AGENT_STDIN };
 }
 
 export type AgentRunResult = {
