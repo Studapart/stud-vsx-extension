@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add **stud: Install Portable stud** and **stud: Update Portable stud**. Install downloads the portable release only after confirmation when no stud executable is found. Update runs `stud update --quiet` for a managed portable link and does not use `--agent`.
 - Add palette workflows for stud sync, commit, push, and submit. Commit, push, and submit ask for confirmation and send `{}`, so staging, the message, and the issue tracker stay with stud.
 - Run allowlisted stud agent commands in the workspace folder so stud can read `.git/stud.config`.
 - Run an allowlist of read-only stud agent commands (`config:show`, `config:validate`, `items:show`, `pr:comments`) and show success, CLI errors, and malformed output. Anything else is refused.

@@ -7,7 +7,7 @@ const SEARCH_DISABLED_MESSAGE =
   'stud.executablePath is not set, and PATH search is disabled. Set the path to the user-installed stud executable.';
 
 const NOT_FOUND_MESSAGE =
-  'stud was not found on PATH or at ~/.local/bin/stud. Set stud.executablePath to an installed binary. This extension does not install stud.';
+  'stud was not found on PATH or at ~/.local/bin/stud. Set stud.executablePath, or run stud: Install Portable stud on Linux x64 or macOS Apple Silicon.';
 
 export type DiscoveryRequest = {
   readonly configuredPath: string | undefined | null;
@@ -68,7 +68,7 @@ export function describeUnresolved(input: {
     return { summary, detail: summary };
   }
   if (input.source === 'explicit') {
-    const summary = `No stud executable at ${input.path}. Set stud.executablePath to an installed binary. This extension does not install stud.`;
+    const summary = `No stud executable at ${input.path}. stud.executablePath is left unchanged. Portable install runs only when that setting is empty.`;
     return { summary, detail: summary };
   }
   return { summary: NOT_FOUND_MESSAGE, detail: NOT_FOUND_MESSAGE };

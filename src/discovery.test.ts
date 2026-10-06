@@ -73,7 +73,7 @@ test('search can be turned off and an empty PATH does not invent a binary', () =
   });
   assert.equal(empty.kind, 'missing');
   if (empty.kind === 'missing') {
-    assert.match(empty.message, /does not install stud/);
+    assert.match(empty.message, /Install Portable stud/);
   }
 });
 
@@ -98,7 +98,7 @@ test('search keeps going until an executable candidate', () => {
 test('unresolved candidates stay missing or not executable', () => {
   const missing = describeUnresolved({ source: 'explicit', state: 'missing', path: '/opt/stud' });
   assert.match(missing.summary, /No stud executable/);
-  assert.match(missing.summary, /does not install/);
+  assert.match(missing.summary, /left unchanged/);
 
   const blocked = describeUnresolved({ source: 'search', state: 'not-executable', path: '/usr/bin/stud' });
   assert.match(blocked.summary, /not executable/);

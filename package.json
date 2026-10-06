@@ -1,9 +1,9 @@
 {
   "name": "stud",
   "displayName": "stud",
-  "description": "Editor wrapper that runs a user-installed stud executable. It does not replace the CLI or call Jira, Linear, GitHub, or GitLab.",
+  "description": "Editor wrapper for stud. It can install portable stud when none is found. It does not call Jira, Linear, or GitLab.",
   "icon": "resources/icon.png",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "studapart",
   "license": "MIT",
   "repository": {
@@ -29,7 +29,9 @@
     "onCommand:stud.sync",
     "onCommand:stud.commit",
     "onCommand:stud.push",
-    "onCommand:stud.submit"
+    "onCommand:stud.submit",
+    "onCommand:stud.installPortable",
+    "onCommand:stud.updatePortable"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -98,6 +100,16 @@
         "command": "stud.submit",
         "title": "Submit",
         "category": "stud"
+      },
+      {
+        "command": "stud.installPortable",
+        "title": "Install Portable stud",
+        "category": "stud"
+      },
+      {
+        "command": "stud.updatePortable",
+        "title": "Update Portable stud",
+        "category": "stud"
       }
     ],
     "configuration": {
@@ -106,7 +118,7 @@
         "stud.executablePath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path to the user-installed `stud` executable. When this is empty and `stud.searchPath` is on, the extension looks on `PATH` and then in `~/.local/bin/stud`. Detection does not change this setting and does not install stud."
+          "markdownDescription": "Absolute path to a stud executable. When this is empty and `stud.searchPath` is on, the extension looks on `PATH` and then in `~/.local/bin/stud`. Detection does not change this setting. **stud: Install Portable stud** downloads portable stud only when this path is empty and search finds no executable."
         },
         "stud.searchPath": {
           "type": "boolean",
