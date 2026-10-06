@@ -41,7 +41,7 @@ test('read-only commands are allowlisted and mutations fail closed', () => {
   }
 });
 
-test('palette workflows confirm mutations and leave staging to stud', () => {
+test('palette workflows keep confirmation copy and placeholder stdin', () => {
   const validate = planWorkflow(VALIDATE_CONFIG_COMMAND);
   const sync = planWorkflow(SYNC_COMMAND);
   assert.equal(validate.kind, 'run');
@@ -80,21 +80,15 @@ test('palette workflows confirm mutations and leave staging to stud', () => {
   assert.equal(planWorkflow('').kind, 'rejected');
 });
 
-test('a work item read sends only the key and a blank key is rejected', () => {
-  for (const key of ['', '   ', undefined, null]) {
-    const plan = planAllowlistedRun(SHOW_WORK_ITEM_COMMAND, key);
-    assert.equal(plan.kind, 'rejected');
-    assert.match(plan.kind === 'rejected' ? plan.summary : '', /work item key/i);
-    assert.match(plan.kind === 'rejected' ? plan.summary : '', /issue tracker/i);
-  }
-
-  const plan = planAllowlistedRun(SHOW_WORK_ITEM_COMMAND, '  SCI-111  ');
+test('show work item is a workflow without a built-in key', () => {
+  const plan = planWorkflow(SHOW_WORK_ITEM_COMMAND);
   assert.equal(plan.kind, 'run');
   if (plan.kind === 'run') {
     assert.deepEqual(plan.args, ['items:show', '--agent']);
-    assert.deepEqual(JSON.parse(plan.stdin), { key: 'SCI-111' });
-    assert.equal(Object.hasOwn(JSON.parse(plan.stdin) as object, 'provider'), false);
+    assert.equal(plan.confirmation, null);
+    assert.equal(plan.stdin, '{}');
   }
+  assert.equal(planAllowlistedRun(SHOW_WORK_ITEM_COMMAND).kind, 'rejected');
 });
 
 test('agent commands need the workspace that holds project config', () => {
