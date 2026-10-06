@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, lstat, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, sep } from 'node:path';
 import * as vscode from 'vscode';
@@ -32,6 +32,16 @@ import {
   planDiscovery,
   type CandidateState,
 } from './discovery';
+import { installPortable, resolvePortableRoot, updatePortable } from './portableInstallRunner';
+import {
+  INSTALL_PORTABLE_COMMAND,
+  UPDATE_PORTABLE_COMMAND,
+  classifyLink,
+  planInstall,
+  planUpdate,
+  portableLocations,
+  type LinkState,
+} from './portableInstall';
 import {
   SHOW_CONFIG_COMMAND,
   SHOW_PULL_REQUEST_COMMENTS_COMMAND,
@@ -81,10 +91,124 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(COMMIT_COMMAND, () => runWorkflow(output, COMMIT_COMMAND)),
     vscode.commands.registerCommand(PUSH_COMMAND, () => runWorkflow(output, PUSH_COMMAND)),
     vscode.commands.registerCommand(SUBMIT_COMMAND, () => runWorkflow(output, SUBMIT_COMMAND)),
+    vscode.commands.registerCommand(INSTALL_PORTABLE_COMMAND, () => runInstallPortable(output)),
+    vscode.commands.registerCommand(UPDATE_PORTABLE_COMMAND, () => runUpdatePortable(output)),
   );
 }
 
 export function deactivate(): void {}
+
+function runInstallPortable(output: vscode.OutputChannel): Promise<void> {
+  if (refuseWhenBusy(output)) {
+    return Promise.resolve();
+  }
+  agentBusy = true;
+  const home = homeDirectory();
+  const work = home === ''
+    ? Promise.resolve(report(output, 'Home directory is unavailable.', 'warning', 'Home directory is unavailable.'))
+    : installFacts(home).then((facts) => confirmInstall(output, facts, home));
+  return work.finally(() => {
+    agentBusy = false;
+  });
+}
+
+function confirmInstall(
+  output: vscode.OutputChannel,
+  facts: Parameters<typeof planInstall>[0],
+  home: string,
+): Promise<void> {
+  const plan = planInstall(facts);
+  if (plan.kind === 'refuse') {
+    report(output, plan.summary, 'warning', plan.summary);
+    return Promise.resolve();
+  }
+  return Promise.resolve(vscode.window.showWarningMessage(plan.confirmation, { modal: true }, 'Install')).then((choice) => {
+    if (choice !== 'Install') {
+      return;
+    }
+    output.appendLine(`Downloading portable stud (${plan.artifact}).`);
+    return installPortable({ artifact: plan.artifact, separator: sep, locations: portableLocations(home, sep) })
+      .then((result) => report(output, result.detail, result.ok ? 'info' : 'error', result.summary));
+  });
+}
+
+function runUpdatePortable(output: vscode.OutputChannel): Promise<void> {
+  if (refuseWhenBusy(output)) {
+    return Promise.resolve();
+  }
+  agentBusy = true;
+  const home = homeDirectory();
+  const bin = portableLocations(home, sep).bin;
+  const work = home === ''
+    ? Promise.resolve(report(output, 'Home directory is unavailable.', 'warning', 'Home directory is unavailable.'))
+    : readLinkState(home).then((link) => {
+      const plan = planUpdate(link);
+      if (plan.kind === 'refuse') {
+        report(output, plan.summary, 'warning', plan.summary);
+        return;
+      }
+      output.appendLine(`Running ${bin} ${plan.args.join(' ')}`);
+      return updatePortable(bin).then((result) => {
+        report(output, result.detail === '' ? result.summary : result.detail, result.ok ? 'info' : 'error', result.summary);
+      });
+    });
+  return work.finally(() => {
+    agentBusy = false;
+  });
+}
+
+function refuseWhenBusy(output: vscode.OutputChannel): boolean {
+  if (!agentBusy) {
+    return false;
+  }
+  report(output, AGENT_ALREADY_RUNNING, 'warning', AGENT_ALREADY_RUNNING);
+  return true;
+}
+
+function installFacts(home: string): Promise<{
+  readonly configuredPath: string;
+  readonly searchEnabled: boolean;
+  readonly states: CandidateState[];
+  readonly platform: string;
+  readonly arch: string;
+  readonly link: LinkState;
+}> {
+  const configuredPath = vscode.workspace.getConfiguration().get<string>(EXECUTABLE_PATH_SETTING) ?? '';
+  const searchEnabled = vscode.workspace.getConfiguration().get<boolean>(SEARCH_PATH_SETTING) !== false;
+  const plan = planDiscovery({
+    configuredPath,
+    searchEnabled,
+    pathEnv: process.env.PATH,
+    homeDir: home,
+    pathDelimiter: delimiter,
+    executableNames: process.platform === 'win32' ? ['stud.exe', 'stud'] : ['stud'],
+  });
+  const states = plan.kind === 'search' ? Promise.all(plan.candidates.map((candidate) => fileState(candidate))) : Promise.resolve([]);
+  return states.then((resolved) => readLinkState(home).then((link) => ({
+    configuredPath,
+    searchEnabled,
+    states: resolved,
+    platform: process.platform,
+    arch: process.arch,
+    link,
+  })));
+}
+
+function readLinkState(home: string): Promise<LinkState> {
+  const locations = portableLocations(home, sep);
+  if (locations.bin === '') {
+    return Promise.resolve('blocked');
+  }
+  return resolvePortableRoot(locations.root).then((portableRoot) => lstat(locations.bin).then(
+    (info) => (info.isSymbolicLink()
+      ? realpath(locations.bin).then(
+        (target) => classifyLink({ exists: true, isSymlink: true, resolvedTarget: target, portableRoot, separator: sep }),
+        () => 'blocked' as const,
+      )
+      : 'blocked'),
+    (error: NodeJS.ErrnoException) => (error.code === 'ENOENT' ? 'absent' : 'blocked'),
+  ));
+}
 
 function runCheckVersion(output: vscode.OutputChannel): Promise<void> {
   return withStud(output, (executable) => {
