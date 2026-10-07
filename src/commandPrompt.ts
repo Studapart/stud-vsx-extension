@@ -75,6 +75,9 @@ export function promptStdin(input: {
     }
     payload[step.name] = value;
   }
+  if (input.command === 'config:validate') {
+    payload.compact = false;
+  }
   return { kind: 'stdin', stdin: JSON.stringify(payload) };
 }
 
