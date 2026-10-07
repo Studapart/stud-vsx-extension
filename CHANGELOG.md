@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add a stud activity-bar panel with Work items, Git and review, and Config. Mutations ask for confirmation before stud starts. Install and update stay on the command palette. The global config wizard, work item transitions, attachment upload, Confluence publish, deploy, release, docs commands, and clear cache are not offered.
 - Ask for each visible stud help input before Validate Config, Sync, Commit, Push, Submit, and Show Work Item. `compact`, `quiet`, and `help` stay hidden. An empty Show Work Item key does not start stud.
 - Add **stud: Install Portable stud** and **stud: Update Portable stud**. Install downloads the portable release only after confirmation when no stud executable is found. Update runs `stud update --quiet` for a managed portable link and does not use `--agent`.
 - Add palette workflows for stud sync, commit, push, and submit. Commit, push, and submit ask for confirmation after the help prompt. Visible inputs are the confirmed JSON; `compact`, `quiet`, and `help` stay omitted.

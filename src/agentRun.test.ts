@@ -201,6 +201,5 @@ test('manifest exposes the allowlisted reads and the palette workflows', () => {
     assert.ok(commands.includes(commandId));
     assert.ok(manifest.activationEvents.includes(`onCommand:${commandId}`));
   }
-  assert.equal(commands.includes('stud.flatten'), false);
   assert.ok(manifest.contributes.commands.every((command) => command.category === 'stud'));
 });

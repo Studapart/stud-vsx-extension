@@ -1,7 +1,7 @@
 {
   "name": "stud",
   "displayName": "stud",
-  "description": "Editor wrapper for stud. It can install portable stud when none is found. It does not call Jira, Linear, or GitLab.",
+  "description": "Editor wrapper for stud. It can install portable stud when none is found, and it offers a side panel of stud actions. It does not call Jira, Linear, or GitLab.",
   "icon": "resources/icon.png",
   "version": "0.0.4",
   "publisher": "studapart",
@@ -31,7 +31,35 @@
     "onCommand:stud.push",
     "onCommand:stud.submit",
     "onCommand:stud.installPortable",
-    "onCommand:stud.updatePortable"
+    "onCommand:stud.updatePortable",
+    "onView:stud.workItems",
+    "onView:stud.git",
+    "onView:stud.config",
+    "onCommand:stud.searchWorkItems",
+    "onCommand:stud.filterIssues",
+    "onCommand:stud.listWorkItems",
+    "onCommand:stud.refreshWorkItems",
+    "onCommand:stud.start",
+    "onCommand:stud.takeover",
+    "onCommand:stud.updateWorkItem",
+    "onCommand:stud.download",
+    "onCommand:stud.switch",
+    "onCommand:stud.renameBranch",
+    "onCommand:stud.flatten",
+    "onCommand:stud.undo",
+    "onCommand:stud.please",
+    "onCommand:stud.branchesList",
+    "onCommand:stud.branchesClean",
+    "onCommand:stud.comment",
+    "onCommand:stud.projectField",
+    "onCommand:stud.status",
+    "onCommand:stud.createWorkItem",
+    "onCommand:stud.projects",
+    "onCommand:stud.workflow",
+    "onCommand:stud.labels",
+    "onCommand:stud.filters",
+    "onCommand:stud.confluenceShow",
+    "onCommand:stud.confluenceLabels"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -110,8 +138,211 @@
         "command": "stud.updatePortable",
         "title": "Update Portable stud",
         "category": "stud"
+      },
+      {
+        "command": "stud.searchWorkItems",
+        "title": "Search work items",
+        "category": "stud"
+      },
+      {
+        "command": "stud.filterIssues",
+        "title": "Show filter issues",
+        "category": "stud"
+      },
+      {
+        "command": "stud.listWorkItems",
+        "title": "List work items",
+        "category": "stud"
+      },
+      {
+        "command": "stud.refreshWorkItems",
+        "title": "Refresh work items",
+        "category": "stud"
+      },
+      {
+        "command": "stud.start",
+        "title": "Start work item",
+        "category": "stud"
+      },
+      {
+        "command": "stud.takeover",
+        "title": "Take over work item",
+        "category": "stud"
+      },
+      {
+        "command": "stud.updateWorkItem",
+        "title": "Update work item",
+        "category": "stud"
+      },
+      {
+        "command": "stud.download",
+        "title": "Download work item",
+        "category": "stud"
+      },
+      {
+        "command": "stud.switch",
+        "title": "Switch branch",
+        "category": "stud"
+      },
+      {
+        "command": "stud.renameBranch",
+        "title": "Rename branch",
+        "category": "stud"
+      },
+      {
+        "command": "stud.flatten",
+        "title": "Flatten",
+        "category": "stud"
+      },
+      {
+        "command": "stud.undo",
+        "title": "Undo commit",
+        "category": "stud"
+      },
+      {
+        "command": "stud.please",
+        "title": "Safe force-push",
+        "category": "stud"
+      },
+      {
+        "command": "stud.branchesList",
+        "title": "List branches",
+        "category": "stud"
+      },
+      {
+        "command": "stud.branchesClean",
+        "title": "Clean merged branches",
+        "category": "stud"
+      },
+      {
+        "command": "stud.comment",
+        "title": "Comment on pull request",
+        "category": "stud"
+      },
+      {
+        "command": "stud.projectField",
+        "title": "Set project field",
+        "category": "stud"
+      },
+      {
+        "command": "stud.status",
+        "title": "Show status",
+        "category": "stud"
+      },
+      {
+        "command": "stud.createWorkItem",
+        "title": "Create work item",
+        "category": "stud"
+      },
+      {
+        "command": "stud.projects",
+        "title": "List projects",
+        "category": "stud"
+      },
+      {
+        "command": "stud.workflow",
+        "title": "Show project workflow",
+        "category": "stud"
+      },
+      {
+        "command": "stud.labels",
+        "title": "Show project labels",
+        "category": "stud"
+      },
+      {
+        "command": "stud.filters",
+        "title": "List filters",
+        "category": "stud"
+      },
+      {
+        "command": "stud.confluenceShow",
+        "title": "Show Confluence page",
+        "category": "stud"
+      },
+      {
+        "command": "stud.confluenceLabels",
+        "title": "Show Confluence page labels",
+        "category": "stud"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "stud.panel",
+          "title": "stud",
+          "icon": "resources/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "stud.panel": [
+        {
+          "id": "stud.workItems",
+          "name": "Work items"
+        },
+        {
+          "id": "stud.git",
+          "name": "Git and review"
+        },
+        {
+          "id": "stud.config",
+          "name": "Config"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "stud.refreshWorkItems",
+          "when": "view == stud.workItems",
+          "group": "navigation"
+        },
+        {
+          "command": "stud.searchWorkItems",
+          "when": "view == stud.workItems"
+        },
+        {
+          "command": "stud.listWorkItems",
+          "when": "view == stud.workItems"
+        },
+        {
+          "command": "stud.filterIssues",
+          "when": "view == stud.workItems"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "stud.showWorkItem",
+          "when": "view == stud.workItems && viewItem == workItem",
+          "group": "inline"
+        },
+        {
+          "command": "stud.start",
+          "when": "view == stud.workItems && viewItem == workItem",
+          "group": "inline"
+        },
+        {
+          "command": "stud.takeover",
+          "when": "view == stud.workItems && viewItem == workItem"
+        },
+        {
+          "command": "stud.updateWorkItem",
+          "when": "view == stud.workItems && viewItem == workItem"
+        },
+        {
+          "command": "stud.download",
+          "when": "view == stud.workItems && viewItem == workItem"
+        },
+        {
+          "command": "stud.switch",
+          "when": "view == stud.workItems && viewItem == workItem"
+        },
+        {
+          "command": "stud.renameBranch",
+          "when": "view == stud.workItems && viewItem == workItem"
+        }
+      ]
+    },
     "configuration": {
       "title": "stud",
       "properties": {

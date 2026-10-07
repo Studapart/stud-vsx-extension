@@ -62,6 +62,30 @@ import {
 } from './agentRun';
 import { planCommandPrompt, promptStdin, type PromptAnswer, type PromptStep } from './commandPrompt';
 import {
+  CONFIG_VIEW,
+  GIT_VIEW,
+  PROJECT_FIELD_COMMAND,
+  REFRESH_WORK_ITEMS_COMMAND,
+  WORK_ITEMS_VIEW,
+  contributedPanelCommands,
+  fillsWorkItemList,
+  panelButtons,
+  panelStdinMode,
+  planPanelAction,
+  planProjectFieldStdin,
+  presetForStep,
+  projectFieldChoices,
+  projectFieldIsSecret,
+  redactSecret,
+  readPanelInvocation,
+  refuseBlankWorkItemKey,
+  showsWorkItemRows,
+  switchMatchSummary,
+  workItemRows,
+  type PanelPlan,
+  type WorkItemRow,
+} from './panelActions';
+import {
   CHECK_VERSION_COMMAND,
   EXECUTABLE_PATH_SETTING,
   VERSION_ARGS,
@@ -79,23 +103,24 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(output);
   output.appendLine('stud extension activated.');
 
+  registerPaletteOrPanel(context, output, CHECK_VERSION_COMMAND, () => runCheckVersion(output));
+  registerPaletteOrPanel(context, output, VALIDATE_COMMAND, () => runValidate(output));
+  registerPaletteOrPanel(context, output, OPEN_GLOBAL_CONFIG_COMMAND, () => runOpenGlobalConfig(output));
+  registerPaletteOrPanel(context, output, OPEN_PROJECT_CONFIG_COMMAND, () => runOpenProjectConfig(output));
+  registerPaletteOrPanel(context, output, REVEAL_CONFIG_LOCATIONS_COMMAND, () => runRevealConfigLocations(output));
+  registerPaletteOrPanel(context, output, SHOW_CONFIG_COMMAND, () => runAllowlisted(output, SHOW_CONFIG_COMMAND));
+  registerPaletteOrPanel(context, output, VALIDATE_CONFIG_COMMAND, () => runPrompted(output, VALIDATE_CONFIG_COMMAND));
+  registerPaletteOrPanel(context, output, SHOW_PULL_REQUEST_COMMENTS_COMMAND, () => runAllowlisted(output, SHOW_PULL_REQUEST_COMMENTS_COMMAND));
+  registerPaletteOrPanel(context, output, SHOW_WORK_ITEM_COMMAND, () => runPrompted(output, SHOW_WORK_ITEM_COMMAND));
+  registerPaletteOrPanel(context, output, SYNC_COMMAND, () => runPrompted(output, SYNC_COMMAND));
+  registerPaletteOrPanel(context, output, COMMIT_COMMAND, () => runPrompted(output, COMMIT_COMMAND));
+  registerPaletteOrPanel(context, output, PUSH_COMMAND, () => runPrompted(output, PUSH_COMMAND));
+  registerPaletteOrPanel(context, output, SUBMIT_COMMAND, () => runPrompted(output, SUBMIT_COMMAND));
   context.subscriptions.push(
-    vscode.commands.registerCommand(CHECK_VERSION_COMMAND, () => runCheckVersion(output)),
-    vscode.commands.registerCommand(VALIDATE_COMMAND, () => runValidate(output)),
-    vscode.commands.registerCommand(OPEN_GLOBAL_CONFIG_COMMAND, () => runOpenGlobalConfig(output)),
-    vscode.commands.registerCommand(OPEN_PROJECT_CONFIG_COMMAND, () => runOpenProjectConfig(output)),
-    vscode.commands.registerCommand(REVEAL_CONFIG_LOCATIONS_COMMAND, () => runRevealConfigLocations(output)),
-    vscode.commands.registerCommand(SHOW_CONFIG_COMMAND, () => runAllowlisted(output, SHOW_CONFIG_COMMAND)),
-    vscode.commands.registerCommand(VALIDATE_CONFIG_COMMAND, () => runPrompted(output, VALIDATE_CONFIG_COMMAND)),
-    vscode.commands.registerCommand(SHOW_PULL_REQUEST_COMMENTS_COMMAND, () => runAllowlisted(output, SHOW_PULL_REQUEST_COMMENTS_COMMAND)),
-    vscode.commands.registerCommand(SHOW_WORK_ITEM_COMMAND, () => runPrompted(output, SHOW_WORK_ITEM_COMMAND)),
-    vscode.commands.registerCommand(SYNC_COMMAND, () => runPrompted(output, SYNC_COMMAND)),
-    vscode.commands.registerCommand(COMMIT_COMMAND, () => runPrompted(output, COMMIT_COMMAND)),
-    vscode.commands.registerCommand(PUSH_COMMAND, () => runPrompted(output, PUSH_COMMAND)),
-    vscode.commands.registerCommand(SUBMIT_COMMAND, () => runPrompted(output, SUBMIT_COMMAND)),
     vscode.commands.registerCommand(INSTALL_PORTABLE_COMMAND, () => runInstallPortable(output)),
     vscode.commands.registerCommand(UPDATE_PORTABLE_COMMAND, () => runUpdatePortable(output)),
   );
+  registerStudPanel(context, output);
 }
 
 export function deactivate(): void {}
@@ -741,4 +766,371 @@ function report(
     return;
   }
   void vscode.window.showErrorMessage(summary);
+}
+
+type PanelRun = Extract<PanelPlan, { kind: 'run' }>;
+
+let workItemModel: WorkItemModel | undefined;
+let workItemsView: vscode.TreeView<WorkItemNode> | undefined;
+
+function registerPaletteOrPanel(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  commandId: string,
+  palette: () => Promise<void>,
+): void {
+  context.subscriptions.push(vscode.commands.registerCommand(commandId, (origin?: unknown) => {
+    if (!readPanelInvocation(origin).fromPanel) {
+      return palette();
+    }
+    return runPanel(output, commandId, invocationFields(origin));
+  }));
+}
+
+function registerStudPanel(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
+  const model = new WorkItemModel();
+  workItemModel = model;
+  const work = vscode.window.createTreeView(WORK_ITEMS_VIEW, { treeDataProvider: model });
+  workItemsView = work;
+  const git = vscode.window.createTreeView(GIT_VIEW, { treeDataProvider: new ActionTree(panelButtons('git')) });
+  const config = vscode.window.createTreeView(CONFIG_VIEW, { treeDataProvider: new ActionTree(panelButtons('config')) });
+  context.subscriptions.push(model, work, git, config, work.onDidChangeVisibility((event) => {
+    if (event.visible) {
+      queueWorkItemLoad(output);
+    }
+  }));
+  if (work.visible) {
+    queueWorkItemLoad(output);
+  }
+  for (const button of contributedPanelCommands()) {
+    context.subscriptions.push(vscode.commands.registerCommand(button.command, (origin?: unknown) => {
+      return runPanel(output, button.command, invocationFields(origin === undefined ? { panel: true } : origin));
+    }));
+  }
+}
+
+let workItemLoadQueued = false;
+
+function queueWorkItemLoad(output: vscode.OutputChannel): void {
+  if (workItemLoadQueued) {
+    return;
+  }
+  workItemLoadQueued = true;
+  queueMicrotask(() => {
+    workItemLoadQueued = false;
+    void runPanel(output, REFRESH_WORK_ITEMS_COMMAND, {});
+  });
+}
+
+function invocationFields(origin: unknown): Readonly<Record<string, string | null>> {
+  const key = readPanelInvocation(origin).key;
+  return key === undefined ? {} : { key };
+}
+
+function runPanel(
+  output: vscode.OutputChannel,
+  commandId: string,
+  fields: Readonly<Record<string, string | null>>,
+): Promise<void> {
+  const plan = planPanelAction(commandId);
+  if (plan.kind === 'rejected') {
+    report(output, plan.summary, 'warning', plan.summary);
+    return Promise.resolve();
+  }
+  if (refuseWhenBusy(output)) {
+    return Promise.resolve();
+  }
+  if (plan.args.length === 0) {
+    agentBusy = true;
+    return dispatchExtension(output, commandId).finally(() => {
+      agentBusy = false;
+    });
+  }
+  return chooseAgentWorkspace(output).then((folder) => {
+    if (folder === undefined || refuseWhenBusy(output)) {
+      return;
+    }
+    agentBusy = true;
+    const mode = panelStdinMode(commandId);
+    const work = mode === 'project-field'
+      ? runProjectField(output, plan, folder)
+      : runPanelStud({ output, plan, folder, fields, emptyStdin: mode === 'empty' });
+    return work.finally(() => {
+      agentBusy = false;
+    });
+  });
+}
+
+function dispatchExtension(output: vscode.OutputChannel, commandId: string): Promise<void> {
+  if (commandId === CHECK_VERSION_COMMAND) {
+    return runCheckVersion(output);
+  }
+  if (commandId === VALIDATE_COMMAND) {
+    return runValidate(output);
+  }
+  if (commandId === OPEN_GLOBAL_CONFIG_COMMAND) {
+    return runOpenGlobalConfig(output);
+  }
+  if (commandId === OPEN_PROJECT_CONFIG_COMMAND) {
+    return runOpenProjectConfig(output);
+  }
+  if (commandId === REVEAL_CONFIG_LOCATIONS_COMMAND) {
+    return runRevealConfigLocations(output);
+  }
+  report(output, 'That action is not a stud panel action.', 'warning', 'That action is not a stud panel action.');
+  return Promise.resolve();
+}
+
+function runPanelStud(input: {
+  readonly output: vscode.OutputChannel;
+  readonly plan: PanelRun;
+  readonly folder: string;
+  readonly fields: Readonly<Record<string, string | null>>;
+  readonly emptyStdin: boolean;
+}): Promise<void> {
+  return withStud(input.output, (executable) => {
+    if (input.emptyStdin) {
+      return acceptPanelStdin({ ...input, executable, stdin: '{}' });
+    }
+    return loadCommandHelp(input.output, executable, input.plan.label, input.folder).then((stdout) => {
+      return continuePanelHelp({ ...input, executable, stdout });
+    });
+  });
+}
+
+function continuePanelHelp(input: {
+  readonly output: vscode.OutputChannel;
+  readonly executable: string;
+  readonly plan: PanelRun;
+  readonly folder: string;
+  readonly fields: Readonly<Record<string, string | null>>;
+  readonly stdout: string | undefined;
+}): Promise<void> {
+  if (input.stdout === undefined) {
+    return Promise.resolve();
+  }
+  const planned = planCommandPrompt({ command: input.plan.label, stdout: input.stdout });
+  if (planned.kind === 'stop') {
+    report(input.output, planned.summary, 'warning', planned.summary);
+    return Promise.resolve();
+  }
+  return askPanelSteps(planned.steps, input.fields).then((answers) => {
+    if (answers === undefined) {
+      return;
+    }
+    return submitPanelAnswers({ ...input, steps: planned.steps, answers });
+  });
+}
+
+function submitPanelAnswers(input: {
+  readonly output: vscode.OutputChannel;
+  readonly executable: string;
+  readonly plan: PanelRun;
+  readonly folder: string;
+  readonly steps: readonly PromptStep[];
+  readonly answers: readonly PromptAnswer[];
+}): Promise<void> {
+  const payload = promptStdin({ command: input.plan.label, steps: input.steps, answers: input.answers });
+  if (payload.kind === 'stop') {
+    report(input.output, payload.summary, 'warning', payload.summary);
+    return Promise.resolve();
+  }
+  const blank = refuseBlankWorkItemKey({ command: input.plan.label, fields: stringFields(input.answers) });
+  if (blank.kind === 'stop') {
+    report(input.output, blank.summary, 'warning', blank.summary);
+    return Promise.resolve();
+  }
+  return acceptPanelStdin({ ...input, stdin: payload.stdin, secret: undefined });
+}
+
+function acceptPanelStdin(input: {
+  readonly output: vscode.OutputChannel;
+  readonly executable: string;
+  readonly plan: PanelRun;
+  readonly folder: string;
+  readonly stdin: string;
+  readonly secret?: string;
+}): Promise<void> {
+  return confirmWorkflow(input.plan.confirmation, input.folder).then((accepted) => {
+    if (!accepted) {
+      return;
+    }
+    input.output.appendLine(`Running ${input.executable} ${input.plan.args.join(' ')} in ${input.folder}`);
+    return runAgent(input.executable, input.plan.args, input.stdin, AGENT_RUN_TIMEOUT_MS, input.folder).then((result) => {
+      presentPanelResult(input.output, input.plan.label, result, input.secret);
+    });
+  });
+}
+
+function presentPanelResult(
+  output: vscode.OutputChannel,
+  label: string,
+  result: { stdout: string; stderr: string; errorMessage?: string },
+  secret?: string,
+): void {
+  const safe = secret === undefined ? result : {
+    stdout: redactSecret(result.stdout, secret),
+    stderr: redactSecret(result.stderr, secret),
+    errorMessage: result.errorMessage,
+  };
+  const match = switchMatchSummary(safe.stdout);
+  if (match.kind === 'choose') {
+    report(output, safe.stdout, 'warning', match.summary);
+    return;
+  }
+  if (fillsWorkItemList(label) && showsWorkItemRows(safe.stdout)) {
+    const parsed = workItemRows(safe.stdout);
+    showWorkItemRows(parsed.kind === 'rows' ? parsed.rows : []);
+  }
+  const formatted = interpretAgentRun({ label, ...safe });
+  report(output, formatted.detail, formatted.level, formatted.summary);
+}
+
+function showWorkItemRows(rows: readonly WorkItemRow[]): void {
+  workItemModel?.replace(rows);
+  if (workItemsView !== undefined) {
+    workItemsView.message = rows.length === 0 ? 'No work items.' : undefined;
+  }
+}
+
+function runProjectField(output: vscode.OutputChannel, plan: PanelRun, folder: string): Promise<void> {
+  return pickProjectField().then((choice) => {
+    if (choice === undefined) {
+      return;
+    }
+    if (choice.kind === 'global') {
+      return runOpenGlobalConfig(output);
+    }
+    return askProjectValue(choice.field).then((value) => saveProjectField(output, plan, folder, choice.field, value));
+  });
+}
+
+function saveProjectField(
+  output: vscode.OutputChannel,
+  plan: PanelRun,
+  folder: string,
+  field: string,
+  value: string | undefined,
+): Promise<void> {
+  if (value === undefined) {
+    return Promise.resolve();
+  }
+  const planned = planProjectFieldStdin({ field, value });
+  if (planned.kind === 'stop') {
+    report(output, planned.summary, 'warning', planned.summary);
+    return Promise.resolve();
+  }
+  const secret = projectFieldIsSecret(field) ? value : undefined;
+  return withStud(output, (executable) => acceptPanelStdin({
+    output,
+    executable,
+    plan,
+    folder,
+    stdin: planned.stdin,
+    secret,
+  }));
+}
+
+function pickProjectField(): Promise<{ readonly field: string; readonly kind: 'project' | 'global' } | undefined> {
+  const items = projectFieldChoices().map((choice) => ({ label: choice.label, description: choice.field, choice }));
+  return Promise.resolve(vscode.window.showQuickPick(items, { title: 'Project setting' })).then((item) => item?.choice);
+}
+
+function askProjectValue(field: string): Promise<string | undefined> {
+  return Promise.resolve(vscode.window.showInputBox({
+    title: field,
+    prompt: field,
+    password: projectFieldIsSecret(field),
+    ignoreFocusOut: true,
+  }));
+}
+
+function askPanelSteps(
+  steps: readonly PromptStep[],
+  fields: Readonly<Record<string, string | null>>,
+): Promise<readonly PromptAnswer[] | undefined> {
+  return steps.reduce<Promise<readonly PromptAnswer[] | undefined>>((pending, step) => {
+    return pending.then((collected) => {
+      if (collected === undefined) {
+        return undefined;
+      }
+      return answerForStep(step, fields).then((answer) => (answer === undefined ? undefined : [...collected, answer]));
+    });
+  }, Promise.resolve([]));
+}
+
+function answerForStep(
+  step: PromptStep,
+  fields: Readonly<Record<string, string | null>>,
+): Promise<PromptAnswer | undefined> {
+  const preset = presetForStep(step.name, fields);
+  if (step.kind === 'text' && preset !== undefined) {
+    return Promise.resolve({ name: step.name, value: preset });
+  }
+  return askOne(step);
+}
+
+function stringFields(answers: readonly PromptAnswer[]): Readonly<Record<string, string | null>> {
+  const fields: Record<string, string | null> = {};
+  for (const answer of answers) {
+    fields[answer.name] = typeof answer.value === 'string' ? answer.value : null;
+  }
+  return fields;
+}
+
+class ActionTree implements vscode.TreeDataProvider<vscode.TreeItem> {
+  private readonly items: readonly vscode.TreeItem[];
+
+  constructor(buttons: readonly { readonly command: string; readonly title: string }[]) {
+    this.items = buttons.map((button) => actionItem(button.command, button.title));
+  }
+
+  getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
+    return item;
+  }
+
+  getChildren(): vscode.TreeItem[] {
+    return [...this.items];
+  }
+}
+
+function actionItem(command: string, title: string): vscode.TreeItem {
+  const item = new vscode.TreeItem(title, vscode.TreeItemCollapsibleState.None);
+  item.command = { command, title, arguments: [{ panel: true }] };
+  return item;
+}
+
+class WorkItemModel implements vscode.TreeDataProvider<WorkItemNode>, vscode.Disposable {
+  private rows: readonly WorkItemRow[] = [];
+  private readonly changes = new vscode.EventEmitter<WorkItemNode | undefined>();
+  readonly onDidChangeTreeData = this.changes.event;
+
+  replace(rows: readonly WorkItemRow[]): void {
+    this.rows = rows;
+    this.changes.fire(undefined);
+  }
+
+  getTreeItem(node: WorkItemNode): vscode.TreeItem {
+    return node;
+  }
+
+  getChildren(): WorkItemNode[] {
+    return this.rows.map((row) => new WorkItemNode(row.key, row.title, row.status));
+  }
+
+  dispose(): void {
+    this.changes.dispose();
+  }
+}
+
+class WorkItemNode extends vscode.TreeItem {
+  readonly panel = true;
+
+  constructor(readonly key: string, title: string, status: string) {
+    super(key, vscode.TreeItemCollapsibleState.None);
+    this.description = title;
+    this.tooltip = status;
+    this.contextValue = 'workItem';
+    this.command = { command: SHOW_WORK_ITEM_COMMAND, title: 'Show', arguments: [{ panel: true, key }] };
+  }
 }
