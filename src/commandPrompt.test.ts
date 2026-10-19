@@ -121,6 +121,29 @@ test('confirmed answers become stdin and empty nullable text is null', () => {
   assert.deepEqual(trimmed.kind === 'stdin' ? JSON.parse(trimmed.stdin) : {}, { message: 'hello' });
 });
 
+test('config validate agent stdin requests full stud output', () => {
+  const payload = promptStdin({
+    command: 'config:validate',
+    steps: [
+      { kind: 'bool', name: 'skipJira', default: false },
+      { kind: 'bool', name: 'skipGit', default: false },
+      { kind: 'bool', name: 'skipLinear', default: false },
+    ],
+    answers: [
+      { name: 'skipJira', value: false },
+      { name: 'skipGit', value: false },
+      { name: 'skipLinear', value: false },
+    ],
+  });
+  assert.equal(payload.kind, 'stdin');
+  assert.deepEqual(payload.kind === 'stdin' ? JSON.parse(payload.stdin) : {}, {
+    skipJira: false,
+    skipGit: false,
+    skipLinear: false,
+    compact: false,
+  });
+});
+
 test('a skipped prompt sends an empty object and mismatched answers stop', () => {
   const empty = promptStdin({ command: 'sync', steps: [], answers: [] });
   assert.equal(empty.kind, 'stdin');
