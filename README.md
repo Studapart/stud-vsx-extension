@@ -6,8 +6,8 @@ Extension id: `studapart.stud`.
 
 ## What this version does
 
-- Activates from the command palette and from the **stud** activity bar.
-- The activity bar has **Work items**, **Git and review**, and **Config**. Opening Work items lists active issues. A row can show, start, take over, update, download, switch, or rename. Search runs JQL. A named filter fills the same list. Git actions include flatten, sync, commit, undo, push, submit, a safe force-push, and branch cleanup. Config can show or validate stud config, set one project field, and open the global file for a Jira API token or Linear API key. Mutations ask you to confirm. Cancelling runs nothing. A second stud action waits until the first finishes.
+- Activates from the command palette and from the **Stud** activity bar. The button uses `resources/icon-activitybar.svg`, a 24×24 single-color stud mark. The Extensions view still uses the full-color icon on white.
+- That panel contains **Work items**, **Git and review**, and **Config**. Work items groups list, create, projects, filters, and Confluence actions, then **Active work items** from stud. Git and review holds git, status, and pull-request actions. Config holds stud config, one project field, and config file shortcuts. A row can show, start, take over, update, download, switch, or rename. Search runs JQL. A named filter fills the same list. Git actions include flatten, sync, commit, undo, push, submit, a safe force-push, and branch cleanup. Config can show or validate stud config, set one project field, and open the global file for a Jira API token or Linear API key. Mutations ask you to confirm. Cancelling runs nothing. A second stud action waits until the first finishes.
 - **stud: Check Version** runs the resolved stud executable with `--version` and writes the result to the **stud** output channel.
 - **stud: Validate stud** runs `help --agent` with `{}` on stdin and checks for a JSON success envelope.
 - **stud: Open Global Config** opens `~/.config/stud/config.yml` when it exists. If it is missing, the extension tells you to run `stud init` and does not create the file.

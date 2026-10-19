@@ -16,7 +16,7 @@ import {
 import { VALIDATE_COMMAND } from './discovery';
 import { CHECK_VERSION_COMMAND } from './versionCheck';
 
-export const PANEL_VIEW_CONTAINER = 'stud.panel';
+export const PANEL_VIEW_CONTAINER = 'stud-panel';
 export const WORK_ITEMS_VIEW = 'stud.workItems';
 export const GIT_VIEW = 'stud.git';
 export const CONFIG_VIEW = 'stud.config';
@@ -46,6 +46,7 @@ export const CONFLUENCE_SHOW_COMMAND = 'stud.confluenceShow';
 export const CONFLUENCE_LABELS_COMMAND = 'stud.confluenceLabels';
 export const STATUS_COMMAND = 'stud.status';
 export const PROJECT_FIELD_COMMAND = 'stud.projectField';
+export const RUN_PANEL_TREE_COMMAND = 'stud.runPanelTreeAction';
 
 const SYNC_CONFIRMATION = 'Sync with stud? This fetches the base branch and rebases the current branch onto it.';
 const COMMIT_CONFIRMATION = 'Commit with stud? Stud decides what is staged and writes the commit message.';
@@ -59,10 +60,14 @@ type PanelAction = {
   readonly args: readonly string[];
   readonly confirmation: string | null;
   readonly view: PanelViewName;
+  readonly section: string;
+  readonly order: number;
   readonly contributed: boolean;
 };
 
 export type PanelButton = { readonly command: string; readonly title: string };
+
+export type PanelTreeSection = { readonly label: string; readonly buttons: readonly PanelButton[] };
 
 export type PanelPlan =
   | { readonly kind: 'run'; readonly label: string; readonly args: readonly string[]; readonly confirmation: string | null }
@@ -80,7 +85,11 @@ export type WorkItemRows = { readonly kind: 'rows'; readonly rows: readonly Work
 
 export type SwitchMatchSummary = { readonly kind: 'choose'; readonly summary: string } | { readonly kind: 'done' };
 
-export type PanelInvocation = { readonly fromPanel: boolean; readonly key: string | undefined };
+export type PanelInvocation = {
+  readonly fromPanel: boolean;
+  readonly key: string | undefined;
+  readonly commandId: string | undefined;
+};
 
 export type PanelStdinMode = 'help' | 'empty' | 'project-field';
 
@@ -107,59 +116,113 @@ const KEYED_COMMANDS = new Set(['items:show', 'items:start', 'items:takeover', '
 
 const LIST_LABELS = new Set(['items:list', 'items:search', 'filters:show']);
 
-function stud(title: string, name: string, confirmation: string | null, view: PanelViewName, contributed = true): PanelAction {
-  return { title, args: [name, '--agent'], confirmation, view, contributed };
+const SECTION_ORDER: Readonly<Record<PanelViewName, readonly string[]>> = {
+  'work-items': ['List', 'Work items', 'Projects & labels', 'Confluence'],
+  git: ['Git', 'Review'],
+  config: ['Stud config', 'Extension & files'],
+  row: ['Row'],
+};
+
+function stud(
+  title: string,
+  name: string,
+  confirmation: string | null,
+  view: PanelViewName,
+  section: string,
+  order: number,
+  contributed = true,
+): PanelAction {
+  return { title, args: [name, '--agent'], confirmation, view, section, order, contributed };
 }
 
-function local(title: string, view: PanelViewName): PanelAction {
-  return { title, args: [], confirmation: null, view, contributed: false };
+function local(title: string, view: PanelViewName, section: string, order: number): PanelAction {
+  return { title, args: [], confirmation: null, view, section, order, contributed: false };
 }
 
 const ACTIONS: Readonly<Record<string, PanelAction>> = {
-  [SEARCH_WORK_ITEMS_COMMAND]: stud('Search work items', 'items:search', null, 'work-items'),
-  [FILTER_ISSUES_COMMAND]: stud('Show filter issues', 'filters:show', null, 'work-items'),
-  [LIST_WORK_ITEMS_COMMAND]: stud('List work items', 'items:list', null, 'work-items'),
-  [REFRESH_WORK_ITEMS_COMMAND]: stud('Refresh work items', 'items:list', null, 'work-items'),
-  [SHOW_WORK_ITEM_COMMAND]: stud('Show Work Item', 'items:show', null, 'row', false),
-  [START_COMMAND]: stud('Start work item', 'items:start', 'Start this work item with stud? This creates a branch and can change the work item state.', 'row'),
-  [TAKEOVER_COMMAND]: stud('Take over work item', 'items:takeover', 'Take over this work item with stud? This can move the branch to you.', 'row'),
-  [UPDATE_WORK_ITEM_COMMAND]: stud('Update work item', 'items:update', 'Update this work item with stud? This writes the fields you confirm.', 'row'),
-  [DOWNLOAD_COMMAND]: stud('Download work item', 'items:download', null, 'row'),
-  [SWITCH_COMMAND]: stud('Switch branch', 'switch', 'Switch with stud? This checks out a branch for the work item.', 'row'),
-  [RENAME_BRANCH_COMMAND]: stud('Rename branch', 'branch:rename', 'Rename the branch with stud? This changes the branch name.', 'row'),
-  [FLATTEN_COMMAND]: stud('Flatten', 'flatten', 'Flatten with stud? This rebases the branch to squash fixup commits and rewrites history.', 'git'),
-  [SYNC_COMMAND]: stud('Sync', 'sync', SYNC_CONFIRMATION, 'git', false),
-  [COMMIT_COMMAND]: stud('Commit', 'commit', COMMIT_CONFIRMATION, 'git', false),
-  [UNDO_COMMAND]: stud('Undo commit', 'commit:undo', 'Undo the last commit with stud? Stud decides how that commit is removed.', 'git'),
-  [PUSH_COMMAND]: stud('Push', 'push', PUSH_CONFIRMATION, 'git', false),
-  [SUBMIT_COMMAND]: stud('Submit', 'submit', SUBMIT_CONFIRMATION, 'git', false),
-  [PLEASE_COMMAND]: stud('Safe force-push', 'please', 'Force-push with stud? Stud uses a safe force-with-lease when it updates the remote.', 'git'),
-  [BRANCHES_LIST_COMMAND]: stud('List branches', 'branches:list', null, 'git'),
-  [BRANCHES_CLEAN_COMMAND]: stud('Clean merged branches', 'branches:clean', 'Clean merged branches with stud? This deletes local branches that are already merged.', 'git'),
-  [SHOW_PULL_REQUEST_COMMENTS_COMMAND]: stud('Show Pull Request Comments', 'pr:comments', null, 'git', false),
-  [COMMENT_COMMAND]: stud('Comment on pull request', 'pr:comment', 'Comment with stud? This posts the text you confirm to the pull request.', 'git'),
-  [SHOW_CONFIG_COMMAND]: stud('Show Config', 'config:show', null, 'config', false),
-  [VALIDATE_CONFIG_COMMAND]: stud('Validate Config', 'config:validate', null, 'config', false),
-  [PROJECT_FIELD_COMMAND]: stud('Set project field', 'config:project-init', 'Save this project setting with stud? Only the one field you entered is sent.', 'config'),
-  [STATUS_COMMAND]: stud('Show status', 'status', null, 'config'),
-  [CHECK_VERSION_COMMAND]: local('Check Version', 'config'),
-  [VALIDATE_COMMAND]: local('Validate stud', 'config'),
-  [OPEN_GLOBAL_CONFIG_COMMAND]: local('Open Global Config', 'config'),
-  [OPEN_PROJECT_CONFIG_COMMAND]: local('Open Project Config', 'config'),
-  [REVEAL_CONFIG_LOCATIONS_COMMAND]: local('Reveal Config Locations', 'config'),
-  [CREATE_WORK_ITEM_COMMAND]: stud('Create work item', 'items:create', 'Create a work item with stud? This opens a new issue in the tracker.', 'config'),
-  [PROJECTS_COMMAND]: stud('List projects', 'projects:list', null, 'config'),
-  [WORKFLOW_COMMAND]: stud('Show project workflow', 'projects:workflow', null, 'config'),
-  [LABELS_COMMAND]: stud('Show project labels', 'projects:labels', null, 'config'),
-  [FILTERS_COMMAND]: stud('List filters', 'filters:list', null, 'config'),
-  [CONFLUENCE_SHOW_COMMAND]: stud('Show Confluence page', 'confluence:show', null, 'config'),
-  [CONFLUENCE_LABELS_COMMAND]: stud('Show Confluence page labels', 'confluence:page-labels', null, 'config'),
+  [SEARCH_WORK_ITEMS_COMMAND]: stud('Search work items', 'items:search', null, 'work-items', 'List', 10),
+  [FILTER_ISSUES_COMMAND]: stud('Show filter issues', 'filters:show', null, 'work-items', 'List', 20),
+  [LIST_WORK_ITEMS_COMMAND]: stud('List work items', 'items:list', null, 'work-items', 'List', 30),
+  [REFRESH_WORK_ITEMS_COMMAND]: stud('Refresh work items', 'items:list', null, 'work-items', 'List', 40),
+  [CREATE_WORK_ITEM_COMMAND]: stud(
+    'Create work item',
+    'items:create',
+    'Create a work item with stud? This opens a new issue in the tracker.',
+    'work-items',
+    'Work items',
+    10,
+  ),
+  [PROJECTS_COMMAND]: stud('List projects', 'projects:list', null, 'work-items', 'Projects & labels', 10),
+  [WORKFLOW_COMMAND]: stud('Show project workflow', 'projects:workflow', null, 'work-items', 'Projects & labels', 20),
+  [LABELS_COMMAND]: stud('Show project labels', 'projects:labels', null, 'work-items', 'Projects & labels', 30),
+  [FILTERS_COMMAND]: stud('List filters', 'filters:list', null, 'work-items', 'Projects & labels', 40),
+  [CONFLUENCE_SHOW_COMMAND]: stud('Show Confluence page', 'confluence:show', null, 'work-items', 'Confluence', 10),
+  [CONFLUENCE_LABELS_COMMAND]: stud('Show Confluence page labels', 'confluence:page-labels', null, 'work-items', 'Confluence', 20),
+  [SHOW_WORK_ITEM_COMMAND]: stud('Show Work Item', 'items:show', null, 'row', 'Row', 10, false),
+  [START_COMMAND]: stud('Start work item', 'items:start', 'Start this work item with stud? This creates a branch and can change the work item state.', 'row', 'Row', 20),
+  [TAKEOVER_COMMAND]: stud('Take over work item', 'items:takeover', 'Take over this work item with stud? This can move the branch to you.', 'row', 'Row', 30),
+  [UPDATE_WORK_ITEM_COMMAND]: stud('Update work item', 'items:update', 'Update this work item with stud? This writes the fields you confirm.', 'row', 'Row', 40),
+  [DOWNLOAD_COMMAND]: stud('Download work item', 'items:download', null, 'row', 'Row', 50),
+  [SWITCH_COMMAND]: stud('Switch branch', 'switch', 'Switch with stud? This checks out a branch for the work item.', 'row', 'Row', 60),
+  [RENAME_BRANCH_COMMAND]: stud('Rename branch', 'branch:rename', 'Rename the branch with stud? This changes the branch name.', 'row', 'Row', 70),
+  [FLATTEN_COMMAND]: stud('Flatten', 'flatten', 'Flatten with stud? This rebases the branch to squash fixup commits and rewrites history.', 'git', 'Git', 10),
+  [SYNC_COMMAND]: stud('Sync', 'sync', SYNC_CONFIRMATION, 'git', 'Git', 20, false),
+  [COMMIT_COMMAND]: stud('Commit', 'commit', COMMIT_CONFIRMATION, 'git', 'Git', 30, false),
+  [UNDO_COMMAND]: stud('Undo commit', 'commit:undo', 'Undo the last commit with stud? Stud decides how that commit is removed.', 'git', 'Git', 40),
+  [PUSH_COMMAND]: stud('Push', 'push', PUSH_CONFIRMATION, 'git', 'Git', 50, false),
+  [SUBMIT_COMMAND]: stud('Submit', 'submit', SUBMIT_CONFIRMATION, 'git', 'Git', 60, false),
+  [PLEASE_COMMAND]: stud('Safe force-push', 'please', 'Force-push with stud? Stud uses a safe force-with-lease when it updates the remote.', 'git', 'Git', 70),
+  [BRANCHES_LIST_COMMAND]: stud('List branches', 'branches:list', null, 'git', 'Git', 80),
+  [BRANCHES_CLEAN_COMMAND]: stud('Clean merged branches', 'branches:clean', 'Clean merged branches with stud? This deletes local branches that are already merged.', 'git', 'Git', 90),
+  [STATUS_COMMAND]: stud('Show status', 'status', null, 'git', 'Git', 100),
+  [SHOW_PULL_REQUEST_COMMENTS_COMMAND]: stud('Show Pull Request Comments', 'pr:comments', null, 'git', 'Review', 10, false),
+  [COMMENT_COMMAND]: stud('Comment on pull request', 'pr:comment', 'Comment with stud? This posts the text you confirm to the pull request.', 'git', 'Review', 20),
+  [SHOW_CONFIG_COMMAND]: stud('Show Config', 'config:show', null, 'config', 'Stud config', 10, false),
+  [VALIDATE_CONFIG_COMMAND]: stud('Validate Config', 'config:validate', null, 'config', 'Stud config', 20, false),
+  [PROJECT_FIELD_COMMAND]: stud('Set project field', 'config:project-init', 'Save this project setting with stud? Only the one field you entered is sent.', 'config', 'Stud config', 30),
+  [CHECK_VERSION_COMMAND]: local('Check Version', 'config', 'Extension & files', 10),
+  [VALIDATE_COMMAND]: local('Validate stud', 'config', 'Extension & files', 20),
+  [OPEN_GLOBAL_CONFIG_COMMAND]: local('Open Global Config', 'config', 'Extension & files', 30),
+  [OPEN_PROJECT_CONFIG_COMMAND]: local('Open Project Config', 'config', 'Extension & files', 40),
+  [REVEAL_CONFIG_LOCATIONS_COMMAND]: local('Reveal Config Locations', 'config', 'Extension & files', 50),
 };
 
 function buttonsFor(view: PanelViewName): readonly PanelButton[] {
+  return actionsForView(view).map(([command, action]) => ({ command, title: action.title }));
+}
+
+function actionsForView(view: PanelViewName): readonly (readonly [string, PanelAction])[] {
+  const ranks = SECTION_ORDER[view];
   return Object.entries(ACTIONS)
     .filter(([, action]) => action.view === view)
-    .map(([command, action]) => ({ command, title: action.title }));
+    .sort((left, right) => {
+      const leftRank = ranks.indexOf(left[1].section);
+      const rightRank = ranks.indexOf(right[1].section);
+      return leftRank - rightRank || left[1].order - right[1].order || left[1].title.localeCompare(right[1].title);
+    });
+}
+
+export function panelSections(view: string): readonly PanelTreeSection[] {
+  if (view !== 'work-items' && view !== 'git' && view !== 'config') {
+    return [];
+  }
+  const sections: PanelTreeSection[] = [];
+  let current = '';
+  let buttons: PanelButton[] = [];
+  for (const [command, action] of actionsForView(view)) {
+    if (action.section !== current) {
+      if (current !== '') {
+        sections.push({ label: current, buttons });
+      }
+      current = action.section;
+      buttons = [];
+    }
+    buttons.push({ command, title: action.title });
+  }
+  if (current !== '') {
+    sections.push({ label: current, buttons });
+  }
+  return sections;
 }
 
 export function planPanelAction(commandId: string): PanelPlan {
@@ -263,14 +326,15 @@ export function presetForStep(stepName: string, fields: Readonly<Record<string, 
 
 export function readPanelInvocation(value: unknown): PanelInvocation {
   if (typeof value !== 'object' || value === null) {
-    return { fromPanel: false, key: undefined };
+    return { fromPanel: false, key: undefined, commandId: undefined };
   }
-  const record = value as { readonly panel?: unknown; readonly key?: unknown };
+  const record = value as { readonly panel?: unknown; readonly key?: unknown; readonly commandId?: unknown };
   const key = typeof record.key === 'string' && record.key.trim() !== '' ? record.key.trim() : undefined;
-  if (record.panel === true || key !== undefined) {
-    return { fromPanel: true, key };
+  const commandId = typeof record.commandId === 'string' && record.commandId.trim() !== '' ? record.commandId.trim() : undefined;
+  if (record.panel === true || key !== undefined || commandId !== undefined) {
+    return { fromPanel: true, key, commandId };
   }
-  return { fromPanel: false, key: undefined };
+  return { fromPanel: false, key: undefined, commandId: undefined };
 }
 
 export function workItemRows(stdout: string): WorkItemRows {

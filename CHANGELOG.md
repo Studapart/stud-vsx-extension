@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Validate Config shows per-provider results (Jira, Linear, GitHub, GitLab) instead of a generic failure when stud returns connectivity data, and sends `compact: false` on `config:validate --agent`.
+- Group Stud panel actions by section. Work-item and Confluence actions live under Work items. Git actions, including status, live under Git and review. Config holds stud config and file shortcuts only. Panel tree clicks use one internal command so labels stay plain.
+- Use `resources/icon-activitybar.svg`, a 24×24 single-color stud mark, for the activity bar. The marketplace icon stays `resources/icon.png` on a white background.
+- Show the stud mark on the activity bar. The button is named Stud and opens Work items, Git and review, and Config. The container id is `stud-panel`, because a dot in that id is rejected and the views are then placed in Explorer.
 - Add a stud activity-bar panel with Work items, Git and review, and Config. Mutations ask for confirmation before stud starts. Install and update stay on the command palette. The global config wizard, work item transitions, attachment upload, Confluence publish, deploy, release, docs commands, and clear cache are not offered.
 - Ask for each visible stud help input before Validate Config, Sync, Commit, Push, Submit, and Show Work Item. `compact`, `quiet`, and `help` stay hidden. An empty Show Work Item key does not start stud.
 - Add **stud: Install Portable stud** and **stud: Update Portable stud**. Install downloads the portable release only after confirmation when no stud executable is found. Update runs `stud update --quiet` for a managed portable link and does not use `--agent`.

@@ -59,7 +59,8 @@
     "onCommand:stud.labels",
     "onCommand:stud.filters",
     "onCommand:stud.confluenceShow",
-    "onCommand:stud.confluenceLabels"
+    "onCommand:stud.confluenceLabels",
+    "onCommand:stud.runPanelTreeAction"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -263,19 +264,24 @@
         "command": "stud.confluenceLabels",
         "title": "Show Confluence page labels",
         "category": "stud"
+      },
+      {
+        "command": "stud.runPanelTreeAction",
+        "title": "Run Stud panel action",
+        "category": "stud"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "stud.panel",
-          "title": "stud",
-          "icon": "resources/icon.png"
+          "id": "stud-panel",
+          "title": "Stud",
+          "icon": "resources/icon-activitybar.png"
         }
       ]
     },
     "views": {
-      "stud.panel": [
+      "stud-panel": [
         {
           "id": "stud.workItems",
           "name": "Work items"

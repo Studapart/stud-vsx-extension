@@ -128,6 +128,16 @@ test('agent results cover success, structured errors, and bad output', () => {
   assert.equal(failed.ok, false);
   assert.match(failed.summary, /issue not found/);
 
+  const validateFailed = interpretAgentRun({
+    label: 'config:validate',
+    stdout:
+      '{"success":false,"error":"Validation failed","data":{"jiraStatus":"ok","gitStatus":"ok","gitProvider":"github","linearStatus":"fail","linearMessage":"Linear connection failed"}}',
+    stderr: '',
+  });
+  assert.equal(validateFailed.ok, false);
+  assert.match(validateFailed.summary, /Linear/);
+  assert.match(validateFailed.detail, /GitHub: OK/);
+
   const emptyError = interpretAgentRun({
     label: 'items:show',
     stdout: '{"success":false,"error":"  "}',

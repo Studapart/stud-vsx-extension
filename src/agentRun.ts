@@ -1,3 +1,5 @@
+import { formatConfigValidateRun } from './configValidateFormat.js';
+
 export const SHOW_CONFIG_COMMAND = 'stud.showConfig';
 export const VALIDATE_CONFIG_COMMAND = 'stud.validateConfig';
 export const SHOW_WORK_ITEM_COMMAND = 'stud.showWorkItem';
@@ -108,6 +110,12 @@ export function interpretAgentRun(input: {
 }): AgentRunResult {
   const stdout = input.stdout.trim();
   const stderr = input.stderr.trim();
+  if (input.label === 'config:validate') {
+    const formatted = formatConfigValidateRun({ stdout, stderr });
+    if (formatted !== null) {
+      return formatted;
+    }
+  }
   const parsed = parseEnvelope(stdout);
   if (parsed.kind === 'ok') {
     const warning = firstWarning(stdout);

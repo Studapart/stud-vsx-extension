@@ -69,8 +69,9 @@ import {
   WORK_ITEMS_VIEW,
   contributedPanelCommands,
   fillsWorkItemList,
-  panelButtons,
+  panelSections,
   panelStdinMode,
+  RUN_PANEL_TREE_COMMAND,
   planPanelAction,
   planProjectFieldStdin,
   presetForStep,
@@ -771,7 +772,7 @@ function report(
 type PanelRun = Extract<PanelPlan, { kind: 'run' }>;
 
 let workItemModel: WorkItemModel | undefined;
-let workItemsView: vscode.TreeView<WorkItemNode> | undefined;
+let workItemsView: vscode.TreeView<WorkItemNode | PanelSectionNode | PanelActionNode> | undefined;
 
 function registerPaletteOrPanel(
   context: vscode.ExtensionContext,
@@ -790,15 +791,30 @@ function registerPaletteOrPanel(
 function registerStudPanel(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
   const model = new WorkItemModel();
   workItemModel = model;
-  const work = vscode.window.createTreeView(WORK_ITEMS_VIEW, { treeDataProvider: model });
+  const workTree = new WorkItemsPanelTree(model);
+  const work = vscode.window.createTreeView(WORK_ITEMS_VIEW, { treeDataProvider: workTree });
   workItemsView = work;
-  const git = vscode.window.createTreeView(GIT_VIEW, { treeDataProvider: new ActionTree(panelButtons('git')) });
-  const config = vscode.window.createTreeView(CONFIG_VIEW, { treeDataProvider: new ActionTree(panelButtons('config')) });
-  context.subscriptions.push(model, work, git, config, work.onDidChangeVisibility((event) => {
-    if (event.visible) {
-      queueWorkItemLoad(output);
-    }
-  }));
+  const git = vscode.window.createTreeView(GIT_VIEW, { treeDataProvider: new PanelSectionTree(panelSections('git')) });
+  const config = vscode.window.createTreeView(CONFIG_VIEW, { treeDataProvider: new PanelSectionTree(panelSections('config')) });
+  context.subscriptions.push(
+    vscode.commands.registerCommand(RUN_PANEL_TREE_COMMAND, (origin?: unknown) => {
+      const invocation = readPanelInvocation(origin);
+      if (invocation.commandId === undefined) {
+        return Promise.resolve();
+      }
+      return runPanel(output, invocation.commandId, invocationFields(origin));
+    }),
+    model,
+    workTree,
+    work,
+    git,
+    config,
+    work.onDidChangeVisibility((event) => {
+      if (event.visible) {
+        queueWorkItemLoad(output);
+      }
+    }),
+  );
   if (work.visible) {
     queueWorkItemLoad(output);
   }
@@ -1078,26 +1094,80 @@ function stringFields(answers: readonly PromptAnswer[]): Readonly<Record<string,
   return fields;
 }
 
-class ActionTree implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private readonly items: readonly vscode.TreeItem[];
+const ACTIVE_WORK_ITEMS_SECTION = 'Active work items';
 
-  constructor(buttons: readonly { readonly command: string; readonly title: string }[]) {
-    this.items = buttons.map((button) => actionItem(button.command, button.title));
-  }
-
-  getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
-    return item;
-  }
-
-  getChildren(): vscode.TreeItem[] {
-    return [...this.items];
+class PanelSectionNode extends vscode.TreeItem {
+  constructor(readonly sectionLabel: string) {
+    super(sectionLabel, vscode.TreeItemCollapsibleState.Expanded);
+    this.contextValue = 'panelSection';
   }
 }
 
-function actionItem(command: string, title: string): vscode.TreeItem {
-  const item = new vscode.TreeItem(title, vscode.TreeItemCollapsibleState.None);
-  item.command = { command, title, arguments: [{ panel: true }] };
-  return item;
+class PanelActionNode extends vscode.TreeItem {
+  constructor(readonly commandId: string, title: string) {
+    super(title, vscode.TreeItemCollapsibleState.None);
+    this.command = {
+      command: RUN_PANEL_TREE_COMMAND,
+      title,
+      arguments: [{ panel: true, commandId }],
+    };
+  }
+}
+
+class PanelSectionTree implements vscode.TreeDataProvider<PanelSectionNode | PanelActionNode> {
+  constructor(private readonly sections: ReturnType<typeof panelSections>) {}
+
+  getTreeItem(element: PanelSectionNode | PanelActionNode): PanelSectionNode | PanelActionNode {
+    return element;
+  }
+
+  getChildren(element?: PanelSectionNode | PanelActionNode): Array<PanelSectionNode | PanelActionNode> {
+    if (element === undefined) {
+      return this.sections.map((section) => new PanelSectionNode(section.label));
+    }
+    if (element instanceof PanelActionNode) {
+      return [];
+    }
+    const section = this.sections.find((entry) => entry.label === element.sectionLabel);
+    return section?.buttons.map((button) => new PanelActionNode(button.command, button.title)) ?? [];
+  }
+}
+
+class WorkItemsPanelTree implements vscode.TreeDataProvider<PanelSectionNode | PanelActionNode | WorkItemNode>, vscode.Disposable {
+  private readonly sections = panelSections('work-items');
+  private readonly changes = new vscode.EventEmitter<PanelSectionNode | PanelActionNode | WorkItemNode | undefined>();
+  private readonly modelListener: vscode.Disposable;
+  readonly onDidChangeTreeData = this.changes.event;
+
+  constructor(private readonly model: WorkItemModel) {
+    this.modelListener = model.onDidChangeTreeData(() => this.changes.fire(undefined));
+  }
+
+  dispose(): void {
+    this.modelListener.dispose();
+    this.changes.dispose();
+  }
+
+  getTreeItem(element: PanelSectionNode | PanelActionNode | WorkItemNode): PanelSectionNode | PanelActionNode | WorkItemNode {
+    return element;
+  }
+
+  getChildren(element?: PanelSectionNode | PanelActionNode | WorkItemNode): Array<PanelSectionNode | PanelActionNode | WorkItemNode> {
+    if (element === undefined) {
+      return [...this.sections.map((section) => new PanelSectionNode(section.label)), new PanelSectionNode(ACTIVE_WORK_ITEMS_SECTION)];
+    }
+    if (element instanceof WorkItemNode) {
+      return [];
+    }
+    if (element instanceof PanelActionNode) {
+      return [];
+    }
+    if (element.sectionLabel === ACTIVE_WORK_ITEMS_SECTION) {
+      return this.model.getChildren();
+    }
+    const section = this.sections.find((entry) => entry.label === element.sectionLabel);
+    return section?.buttons.map((button) => new PanelActionNode(button.command, button.title)) ?? [];
+  }
 }
 
 class WorkItemModel implements vscode.TreeDataProvider<WorkItemNode>, vscode.Disposable {

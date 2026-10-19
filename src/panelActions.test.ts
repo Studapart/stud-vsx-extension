@@ -1,17 +1,20 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { COMMIT_COMMAND, PUSH_COMMAND, SUBMIT_COMMAND, SYNC_COMMAND, planWorkflow } from './agentRun';
 import { INSTALL_PORTABLE_COMMAND, UPDATE_PORTABLE_COMMAND } from './portableInstall';
 import {
   CONFIG_VIEW,
+  CREATE_WORK_ITEM_COMMAND,
   DOWNLOAD_COMMAND,
   FLATTEN_COMMAND,
+  STATUS_COMMAND,
   GIT_VIEW,
   PANEL_VIEW_CONTAINER,
   PROJECT_FIELD_COMMAND,
   REFRESH_WORK_ITEMS_COMMAND,
+  RUN_PANEL_TREE_COMMAND,
   START_COMMAND,
   WORK_ITEMS_VIEW,
   WORKFLOW_COMMAND,
@@ -19,6 +22,7 @@ import {
   fillsWorkItemList,
   showsWorkItemRows,
   panelButtons,
+  panelSections,
   panelStdinMode,
   planPanelAction,
   planProjectFieldStdin,
@@ -68,7 +72,11 @@ test('planPanelAction accepts panel controls and rejects everything else', () =>
 
 test('panel buttons and contributed commands stay on the allowlist', () => {
   assert.ok(panelButtons('git').some((button) => button.command === FLATTEN_COMMAND));
-  assert.ok(panelButtons('config').some((button) => button.command === WORKFLOW_COMMAND));
+  assert.ok(panelButtons('git').some((button) => button.command === STATUS_COMMAND));
+  assert.ok(panelButtons('work-items').some((button) => button.command === WORKFLOW_COMMAND));
+  assert.ok(panelButtons('work-items').some((button) => button.command === CREATE_WORK_ITEM_COMMAND));
+  assert.equal(panelButtons('config').some((button) => button.command === CREATE_WORK_ITEM_COMMAND), false);
+  assert.equal(panelButtons('config').some((button) => button.command === STATUS_COMMAND), false);
   assert.equal(panelButtons('').length, 0);
   for (const button of [...panelButtons('work-items'), ...panelButtons('git'), ...panelButtons('config')]) {
     assert.equal(planPanelAction(button.command).kind, 'run');
@@ -80,6 +88,21 @@ test('panel buttons and contributed commands stay on the allowlist', () => {
   assert.equal(rowCommands().includes(INSTALL_PORTABLE_COMMAND), false);
   assert.ok(contributedPanelCommands().length > 0);
   assert.equal(contributedPanelCommands().some((button) => button.command === INSTALL_PORTABLE_COMMAND), false);
+
+  const workSections = panelSections('work-items').map((section) => section.label);
+  assert.deepEqual(workSections, ['List', 'Work items', 'Projects & labels', 'Confluence']);
+  const configSections = panelSections('config').map((section) => section.label);
+  assert.deepEqual(configSections, ['Stud config', 'Extension & files']);
+  assert.deepEqual(panelSections('git').map((section) => section.label), ['Git', 'Review']);
+});
+
+test('panel tree invocation carries the target command id', () => {
+  assert.deepEqual(readPanelInvocation({ panel: true, commandId: ' stud.start ' }), {
+    fromPanel: true,
+    key: undefined,
+    commandId: 'stud.start',
+  });
+  assert.deepEqual(readPanelInvocation({ panel: true }), { fromPanel: true, key: undefined, commandId: undefined });
 });
 
 test('stdin mode, list fill, secrets, and invocation stay narrow', () => {
@@ -106,9 +129,9 @@ test('stdin mode, list fill, secrets, and invocation stay narrow', () => {
   assert.equal(redactSecret('unchanged', ''), 'unchanged');
   assert.equal(redactSecret('unchanged', 'missing'), 'unchanged');
 
-  assert.deepEqual(readPanelInvocation({ panel: true, key: ' SCI-1 ' }), { fromPanel: true, key: 'SCI-1' });
-  assert.deepEqual(readPanelInvocation(undefined), { fromPanel: false, key: undefined });
-  assert.deepEqual(readPanelInvocation({ panel: false }), { fromPanel: false, key: undefined });
+  assert.deepEqual(readPanelInvocation({ panel: true, key: ' SCI-1 ' }), { fromPanel: true, key: 'SCI-1', commandId: undefined });
+  assert.deepEqual(readPanelInvocation(undefined), { fromPanel: false, key: undefined, commandId: undefined });
+  assert.deepEqual(readPanelInvocation({ panel: false }), { fromPanel: false, key: undefined, commandId: undefined });
   assert.equal(presetForStep('issueKey', { key: ' SCI-9 ' }), 'SCI-9');
   assert.equal(presetForStep('path', { key: 'SCI-9' }), undefined);
   assert.equal(presetForStep('key', { key: '   ' }), undefined);
@@ -213,7 +236,11 @@ test('manifest contributes the stud side panel', () => {
 
   for (const command of commands) {
     const plan = planPanelAction(command.command);
-    if (command.command === INSTALL_PORTABLE_COMMAND || command.command === UPDATE_PORTABLE_COMMAND) {
+    if (
+      command.command === INSTALL_PORTABLE_COMMAND
+      || command.command === UPDATE_PORTABLE_COMMAND
+      || command.command === RUN_PANEL_TREE_COMMAND
+    ) {
       assert.equal(plan.kind, 'rejected');
       continue;
     }
@@ -221,8 +248,11 @@ test('manifest contributes the stud side panel', () => {
   }
 
   const container = manifest.contributes.viewsContainers?.activitybar?.find((entry) => entry.id === PANEL_VIEW_CONTAINER);
-  assert.equal(container?.title, 'stud');
-  assert.equal(container?.icon, 'resources/icon.png');
+  assert.equal(container?.title, 'Stud');
+  assert.equal(container?.icon, 'resources/icon-activitybar.png');
+  assert.equal(existsSync(join(__dirname, '..', container?.icon ?? '')), true);
+  const svg = readFileSync(join(__dirname, '..', 'resources/icon-activitybar.png'), 'utf8');
+  assert.ok(svg.length < 20_000);
   const views = manifest.contributes.views?.[PANEL_VIEW_CONTAINER] ?? [];
   assert.deepEqual(views.map((view) => view.id), [WORK_ITEMS_VIEW, GIT_VIEW, CONFIG_VIEW]);
   for (const view of [WORK_ITEMS_VIEW, GIT_VIEW, CONFIG_VIEW]) {
