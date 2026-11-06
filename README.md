@@ -40,11 +40,31 @@ npm test
 
 In Cursor or VS Code, open this folder and run **Run Extension**. That starts an Extension Development Host with this extension loaded. Open the **stud** activity bar and confirm Work items, Git and review, and Config are there. Cancel a confirmation on Flatten or Commit and confirm stud does not start. Open the command palette and run **stud: Validate stud**, **stud: Check Version**, **stud: Open Global Config**, **stud: Open Project Config**, **stud: Reveal Config Locations**, **stud: Show Config**, **stud: Validate Config**, **stud: Show Work Item**, **stud: Show Pull Request Comments**, **stud: Sync**, **stud: Commit**, **stud: Push**, **stud: Submit**, **stud: Install Portable stud**, or **stud: Update Portable stud**. Cancel a prompt step or the confirmation on a mutation or install and confirm the workflow was not started and nothing was downloaded. Install and update stay on the command palette.
 
-To build an installable VSIX, run the packaging script with the target file name. The version in the name is written to `package.json` before packaging. It needs Node.js 22 or newer because `@vscode/vsce` requires it.
+To build an installable VSIX, run `npm run package`. It writes `stud-<version>.vsix` from the version in `package.json` and runs the tests first. It needs Node.js 22 or newer because `@vscode/vsce` requires it.
 
 ```bash
-npm run package -- --output-file stud-0.0.2.vsix
-cursor --install-extension stud-0.0.2.vsix --force
+npm run package
+cursor --install-extension stud-0.0.1.vsix --force
 ```
+
+## Install from a release
+
+Each release is on the GitHub releases page with its `stud-<version>.vsix` attached. Download that file, then install it:
+
+- Cursor: `cursor --install-extension stud-<version>.vsix --force`, or **Extensions** → **…** → **Install from VSIX**.
+- VS Code: `code --install-extension stud-<version>.vsix --force`, or **Extensions** → **…** → **Install from VSIX**.
+
+To confirm the installed version, run `cursor --list-extensions --show-versions` (or `code ...`) and look for `studapart.stud@<version>`.
+
+## Release
+
+Releases follow git flow. `develop` is where work lands, `master` is the release branch, and each release is `release/vX.Y.Z` cut from `develop`. Versions are semantic (`X.Y.Z`) and live only in `package.json`.
+
+1. Merge the changes into `develop` and add their notes under `## [Unreleased]` in `CHANGELOG.md`.
+2. Run `npm run release` on a clean `develop` that matches `origin/develop`. The default bumps the patch version. Use `npm run release -- minor`, `npm run release -- major`, or `npm run release -- X.Y.Z` for another version. This creates `release/vX.Y.Z` with the version bump and moved notes, and does not push.
+3. Check the branch, then run `npm run deploy` from `release/vX.Y.Z`. It merges the branch into `master`, tags `vX.Y.Z`, rebases `develop` onto `master`, and pushes the tag, `master`, and `develop` (with lease). It stops before any push if a merge or rebase conflicts. Finish the conflict by hand and push the branches yourself.
+4. The push to `master` starts `.github/workflows/release.yml`. It builds `stud-X.Y.Z.vsix` and creates the GitHub release `vX.Y.Z` with that file and the changelog notes. A run for a version whose release already has the archive does nothing.
+
+Rebasing `develop` rewrites its commits. Update any open pull requests that were based on it. Do not force-push `master`; to roll back a release, add a commit to `master` and delete the GitHub release.
 
 Leave `stud.executablePath` empty to use discovery. Set it when the binary is somewhere else. Turn off `stud.searchPath` to require the explicit path.
