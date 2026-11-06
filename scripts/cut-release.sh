@@ -49,13 +49,13 @@ fi
 notes="$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased | tr -d '[:space:]')"
 [ -n "$notes" ] || die "CHANGELOG.md has no notes under Unreleased"
 
-git checkout -b "release/$tag" origin/develop
+git checkout --no-track -b "release/$tag" origin/develop
 npm version "$next" --no-git-tag-version --allow-same-version >/dev/null
 
 release_date="${RELEASE_DATE:-$(date -u +%F)}"
 awk -v heading="## [$next] - $release_date" '
   { print }
-  $0 == "## [Unreleased]" && !done { print ""; print heading; done = 1 }
+  !done && index($0, "## [Unreleased]") == 1 { print ""; print heading; done = 1 }
 ' CHANGELOG.md > CHANGELOG.md.new
 mv CHANGELOG.md.new CHANGELOG.md
 

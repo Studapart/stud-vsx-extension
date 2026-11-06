@@ -62,9 +62,16 @@ Releases follow git flow. `develop` is where work lands, `master` is the release
 
 1. Merge the changes into `develop` and add their notes under `## [Unreleased]` in `CHANGELOG.md`.
 2. Run `npm run release` on a clean `develop` that matches `origin/develop`. The default bumps the patch version. Use `npm run release -- minor`, `npm run release -- major`, or `npm run release -- X.Y.Z` for another version. This creates `release/vX.Y.Z` with the version bump and moved notes, and does not push.
-3. Check the branch, then run `npm run deploy` from `release/vX.Y.Z`. It merges the branch into `master`, tags `vX.Y.Z`, rebases `develop` onto `master`, and pushes the tag, `master`, and `develop` (with lease). It stops before any push if a merge or rebase conflicts. Finish the conflict by hand and push the branches yourself.
-4. The push to `master` starts `.github/workflows/release.yml`. It builds `stud-X.Y.Z.vsix` and creates the GitHub release `vX.Y.Z` with that file and the changelog notes. A run for a version whose release already has the archive does nothing.
+3. Check the branch, then run `npm run deploy` from `release/vX.Y.Z`. It requires local `master` and `develop` to match `origin`. It merges the branch into `master`, tags `vX.Y.Z`, rebases `develop` onto `master`, then pushes the tag and `master` together (atomically) and `develop` with lease. A merge or rebase conflict stops it before anything is pushed.
+4. The push to `master` starts `.github/workflows/release.yml`. It builds `stud-X.Y.Z.vsix` and creates the GitHub release `vX.Y.Z` with that file and the changelog notes. A run for a version whose release already has the archive does nothing. A run for a version whose release is a draft or has no archive fails and needs a look.
 
 Rebasing `develop` rewrites its commits. Update any open pull requests that were based on it. Do not force-push `master`; to roll back a release, add a commit to `master` and delete the GitHub release.
+
+### If deploy stops
+
+- **Merge or rebase conflict:** nothing was pushed. Resolve it by hand (`git rebase --continue` or finish the merge), then finish what the script did: `git tag -a vX.Y.Z` if the tag is missing after a merge conflict, `git push --atomic origin vX.Y.Z master`, `git push --force-with-lease origin develop`, and `git branch -d release/vX.Y.Z`.
+- **Rejected tag and `master` push:** nothing was published, because the push is atomic. Undo the local merge, tag, and rebase, fix the cause, and run `npm run deploy` again: `git checkout master && git reset --hard origin/master`, `git tag -d vX.Y.Z`, `git checkout develop && git reset --hard origin/develop`, then `git checkout release/vX.Y.Z`.
+- **Rejected `develop` push:** `master` and the tag are published. Do not re-run deploy. Rebase `develop` onto `origin/master` by hand (`git checkout develop && git fetch origin && git rebase origin/master`) and push it with `git push --force-with-lease origin develop`, then `git branch -d release/vX.Y.Z`.
+- **Failed release build:** the tag and `master` are published. Re-run the failed job from the Actions tab for a transient failure. For a build that fails every time, do not re-tag the same version; cut the next patch version instead.
 
 Leave `stud.executablePath` empty to use discovery. Set it when the binary is somewhere else. Turn off `stud.searchPath` to require the explicit path.

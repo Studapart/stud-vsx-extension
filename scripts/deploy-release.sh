@@ -26,21 +26,22 @@ tag="v$version"
 [ -z "$(git status --porcelain)" ] || die "working tree is not clean"
 
 git fetch origin
+for base in master develop; do
+  [ "$(git rev-parse "$base")" = "$(git rev-parse "origin/$base")" ] || die "$base differs from origin/$base; reset or pull it first"
+done
+develop_base="$(git rev-parse origin/develop)"
 
 git checkout master
-git pull --ff-only origin master
 git merge --no-ff "$branch" -m "chore(release): merge version $version"
 git tag -a "$tag" -m "Release $tag"
 
 git checkout develop
-git pull --ff-only origin develop
 git rebase master
 
-git push origin "$tag"
-git push origin master
-git push --force-with-lease origin develop
+git push --atomic origin "$tag" master
+git push --force-with-lease="develop:$develop_base" origin develop
 
-remote_branch="$(git ls-remote --heads origin "$branch")"
+remote_branch="$(git ls-remote --heads origin "refs/heads/$branch")"
 if [ -n "$remote_branch" ]; then
   git push origin --delete "$branch"
 fi

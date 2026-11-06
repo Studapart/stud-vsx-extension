@@ -3,7 +3,7 @@
 #
 # Usage: scripts/changelog-section.sh <changelog> <heading>
 #   <heading> is Unreleased or X.Y.Z
-# Exits 1 when the heading does not exist.
+# Exits 1, with a message on stderr, when the heading does not exist.
 set -euo pipefail
 
 if [ $# -ne 2 ]; then
@@ -11,9 +11,14 @@ if [ $# -ne 2 ]; then
   exit 2
 fi
 
-awk -v heading="$2" '
+awk -v heading="$2" -v changelog="$1" '
   !found && index($0, "## [" heading "]") == 1 { found = 1; inside = 1; next }
   inside && /^## / { exit }
   inside { print }
-  END { exit found ? 0 : 1 }
+  END {
+    if (!found) {
+      print "error: " changelog " has no \"## [" heading "]\" section" > "/dev/stderr"
+    }
+    exit found ? 0 : 1
+  }
 ' "$1"
