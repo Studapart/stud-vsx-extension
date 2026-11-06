@@ -1,0 +1,77 @@
+name: release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Read the version
+        id: version
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when the release already has the archive
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx "stud-$VERSION.vsix"; then
+              echo "$tag already has stud-$VERSION.vsix; nothing to publish"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "error: release $tag exists without stud-$VERSION.vsix" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Check the release notes
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bash scripts/changelog-section.sh CHANGELOG.md "$VERSION" > release-notes.md
+          if [ -z "$(tr -d '[:space:]' < release-notes.md)" ]; then
+            echo "error: CHANGELOG.md has no notes under $VERSION" >&2
+            exit 1
+          fi
+          if [ -n "$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased | tr -d '[:space:]')" ]; then
+            echo "error: CHANGELOG.md has notes under Unreleased after the cut" >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: steps.existing.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Build the archive
+        if: steps.existing.outputs.skip != 'true'
+        run: npm run package
+
+      - name: Create the release
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v$VERSION" "stud-$VERSION.vsix" --target ${{ github.sha }} --title "v$VERSION" --notes-file release-notes.md

@@ -369,7 +369,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test out/*.test.js",
-    "package": "scripts/package-vsix.sh"
+    "package": "scripts/package-vsix.sh",
+    "release": "scripts/cut-release.sh",
+    "deploy": "scripts/deploy-release.sh"
   },
   "devDependencies": {
     "@types/node": "^18.19.80",
