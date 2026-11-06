@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the version
+        id: version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "error: package.json version '$version' is not X.Y.Z" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when the release already has the archive
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if details="$(gh release view "$tag" --json isDraft,assets 2>"$RUNNER_TEMP/gh.err")"; then
+            if [ "$(jq -r .isDraft <<< "$details")" = true ]; then
+              echo "error: $tag is a draft; publish or delete it, then re-run" >&2
+              exit 1
+            fi
+            if jq -e --arg asset "stud-$VERSION.vsix" '.assets[].name | select(. == $asset)' <<< "$details" > /dev/null; then
+              echo "$tag already has stud-$VERSION.vsix; nothing to publish"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "error: release $tag exists without stud-$VERSION.vsix" >&2
+              exit 1
+            fi
+          elif ! grep -qi 'not found' "$RUNNER_TEMP/gh.err"; then
+            cat "$RUNNER_TEMP/gh.err" >&2
+            exit 1
+          fi
+
+      - name: Check the release notes
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          bash scripts/changelog-section.sh CHANGELOG.md "$VERSION" > "$notes"
+          if [ -z "$(tr -d '[:space:]' < "$notes")" ]; then
+            echo "error: CHANGELOG.md has no notes under $VERSION" >&2
+            exit 1
+          fi
+          if [ -n "$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased 2>/dev/null | tr -d '[:space:]')" ]; then
+            echo "error: CHANGELOG.md has notes under Unreleased after the cut" >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: steps.existing.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Build the archive
+        if: steps.existing.outputs.skip != 'true'
+        run: npm run package
+
+      - name: Create the release
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET_SHA: ${{ github.sha }}
+        run: gh release create "v$VERSION" "stud-$VERSION.vsix" --target "$TARGET_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"

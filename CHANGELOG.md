@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add a release pipeline: `npm run release` cuts `release/vX.Y.Z` from `develop`, `npm run deploy` merges it into `master` and tags it, and a push to `master` publishes `stud-X.Y.Z.vsix` as a GitHub release. The version is reset to 0.0.1.
 - Validate Config shows per-provider results (Jira, Linear, GitHub, GitLab) instead of a generic failure when stud returns connectivity data, and sends `compact: false` on `config:validate --agent`.
 - Group Stud panel actions by section. Work-item and Confluence actions live under Work items. Git actions, including status, live under Git and review. Config holds stud config and file shortcuts only. Panel tree clicks use one internal command so labels stay plain.
 - Use `resources/icon-activitybar.svg`, a 24×24 single-color stud mark, for the activity bar. The marketplace icon stays `resources/icon.png` on a white background.
@@ -14,6 +15,6 @@
 - Run an allowlist of read-only stud agent commands (`config:show`, `pr:comments`) and show success, CLI errors, and malformed output. Validate Config and Show Work Item use the help prompt. Anything else is refused.
 - Open or reveal the global stud config (`~/.config/stud/config.yml`) and the project stud config (`.git/stud.config`) without creating files or printing their contents.
 - Use the stud mark as the extension icon, on a white background. The transparent variant is kept in `resources/icon-a.png`.
-- Add `npm run package -- --output-file stud-x.y.z.vsix` to build the VSIX; it sets the manifest version from the file name and needs Node.js 22+.
+- Add `npm run package` to build `stud-<version>.vsix` from `package.json`; it needs Node.js 22+.
 - Discover a user-installed stud on `PATH` and in `~/.local/bin/stud` when `stud.executablePath` is empty, and validate it with `stud help --agent`.
 - Bootstrap a VS Code and Cursor extension that activates a stud version check and a `stud.executablePath` setting.
