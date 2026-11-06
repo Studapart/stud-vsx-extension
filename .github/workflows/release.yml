@@ -31,7 +31,8 @@ jobs:
         run: |
           tag="v$VERSION"
           if gh release view "$tag" > /dev/null 2>&1; then
-            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx "stud-$VERSION.vsix"; then
+            assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            if grep -qx "stud-$VERSION.vsix" <<< "$assets"; then
               echo "$tag already has stud-$VERSION.vsix; nothing to publish"
               echo "skip=true" >> "$GITHUB_OUTPUT"
             else
