@@ -67,7 +67,7 @@ jobs:
             echo "error: CHANGELOG.md has no notes under $VERSION" >&2
             exit 1
           fi
-          if [ -n "$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased | tr -d '[:space:]')" ]; then
+          if [ -n "$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased 2>/dev/null | tr -d '[:space:]')" ]; then
             echo "error: CHANGELOG.md has notes under Unreleased after the cut" >&2
             exit 1
           fi

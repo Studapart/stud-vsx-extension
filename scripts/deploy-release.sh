@@ -27,6 +27,7 @@ tag="v$version"
 
 git fetch origin
 for base in master develop; do
+  git rev-parse -q --verify "refs/heads/$base" >/dev/null || die "no local $base; create it with: git branch $base origin/$base"
   [ "$(git rev-parse "$base")" = "$(git rev-parse "origin/$base")" ] || die "$base differs from origin/$base; reset or pull it first"
 done
 develop_base="$(git rev-parse origin/develop)"

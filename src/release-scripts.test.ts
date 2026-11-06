@@ -294,18 +294,58 @@ test('deploy-release stops at a rebase conflict and publishes nothing', () => {
   });
 });
 
+function rejectRefOnOrigin(origin: string, ref: string): void {
+  writeFileSync(join(origin, 'hooks', 'update'), `#!/bin/sh\n[ "$1" = ${ref} ] && exit 1\nexit 0\n`, { mode: 0o755 });
+}
+
 test('deploy-release publishes neither the tag nor master when the master push is rejected', () => {
   withRepo(({ work, origin }) => {
-    writeFileSync(
-      join(origin, 'hooks', 'pre-receive'),
-      '#!/bin/sh\nwhile read old new ref; do\n  [ "$ref" = refs/heads/master ] && exit 1\ndone\nexit 0\n',
-      { mode: 0o755 },
-    );
+    rejectRefOnOrigin(origin, 'refs/heads/master');
     assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
     const masterBefore = git(origin, 'rev-parse', 'master');
-    assert.notEqual(runScript(work, 'deploy-release.sh').status, 0);
+    const developBefore = git(origin, 'rev-parse', 'develop');
+    const result = runScript(work, 'deploy-release.sh');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rejected/);
     assert.equal(git(origin, 'rev-parse', 'master'), masterBefore);
+    assert.equal(git(origin, 'rev-parse', 'develop'), developBefore);
     assert.equal(git(work, 'ls-remote', '--tags', 'origin', 'v0.0.2'), '');
+  });
+});
+
+test('deploy-release keeps master and the tag when the develop push is rejected', () => {
+  withRepo(({ work, origin }) => {
+    rejectRefOnOrigin(origin, 'refs/heads/develop');
+    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    const developBefore = git(origin, 'rev-parse', 'develop');
+    const result = runScript(work, 'deploy-release.sh');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rejected/);
+    assert.match(git(origin, 'show', 'master:package.json'), /"version": "0\.0\.2"/);
+    assert.equal(git(origin, 'rev-parse', 'v0.0.2^{commit}'), git(origin, 'rev-parse', 'master'));
+    assert.equal(git(origin, 'rev-parse', 'develop'), developBefore);
+  });
+});
+
+test('deploy-release deletes the release branch from origin after a successful deploy', () => {
+  withRepo(({ work, origin }) => {
+    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    git(work, 'push', 'origin', 'release/v0.0.2');
+    assert.equal(runScript(work, 'deploy-release.sh').status, 0);
+    assert.equal(git(origin, 'branch', '--list', 'release/v0.0.2'), '');
+  });
+});
+
+test('deploy-release refuses a clone without a local master', () => {
+  withRepo(({ work, origin }) => {
+    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    git(work, 'checkout', 'release/v0.0.2');
+    git(work, 'branch', '-D', 'master');
+    const masterBefore = git(origin, 'rev-parse', 'master');
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /no local master/);
+    assert.equal(git(origin, 'rev-parse', 'master'), masterBefore);
   });
 });
 
@@ -325,6 +365,9 @@ test('release workflow runs only on master and checks notes and archive before n
   assert.ok(at('npm run package') < at('gh release create'));
   assert.match(workflow, /TARGET_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /gh release create[^\n]*--target "\$TARGET_SHA"/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
+  assert.match(workflow, /--notes-file "\$RUNNER_TEMP\/release-notes\.md"/);
 });
 
 test('package-vsix names the archive from package.json and does not write the version', () => {
