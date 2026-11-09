@@ -3,7 +3,7 @@
   "displayName": "stud",
   "description": "Editor wrapper for stud. It can install portable stud when none is found, and it offers a side panel of stud actions. It does not call Jira, Linear, or GitLab.",
   "icon": "resources/icon.png",
-  "version": "0.0.4",
+  "version": "0.0.1",
   "publisher": "studapart",
   "license": "MIT",
   "repository": {
@@ -369,7 +369,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test out/*.test.js",
-    "package": "scripts/package-vsix.sh"
+    "package": "scripts/package-vsix.sh",
+    "release": "scripts/cut-release.sh",
+    "deploy": "scripts/deploy-release.sh"
   },
   "devDependencies": {
     "@types/node": "^18.19.80",
