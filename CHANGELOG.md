@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-11-09
+
 - Add a release pipeline: `npm run release` cuts `release/vX.Y.Z` from `develop`, `npm run deploy` merges it into `master` and tags it, and a push to `master` publishes `stud-X.Y.Z.vsix` as a GitHub release. The version is reset to 0.0.1.
 - Validate Config shows per-provider results (Jira, Linear, GitHub, GitLab) instead of a generic failure when stud returns connectivity data, and sends `compact: false` on `config:validate --agent`.
 - Group Stud panel actions by section. Work-item and Confluence actions live under Work items. Git actions, including status, live under Git and review. Config holds stud config and file shortcuts only. Panel tree clicks use one internal command so labels stay plain.
