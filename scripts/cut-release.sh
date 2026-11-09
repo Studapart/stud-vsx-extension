@@ -3,7 +3,7 @@
 #
 # Usage: scripts/cut-release.sh [major|minor|patch|X.Y.Z]   (default: patch)
 # Run from a clean develop that matches origin/develop. Does not push;
-# scripts/deploy-release.sh publishes the release.
+# scripts/deploy-release.sh pushes the tag and master; the release workflow publishes.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

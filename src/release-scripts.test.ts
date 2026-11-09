@@ -6,7 +6,13 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 const ROOT = resolve(__dirname, '..');
-const RELEASE_SCRIPTS = ['cut-release.sh', 'deploy-release.sh', 'changelog-section.sh'] as const;
+const RELEASE_SCRIPTS = [
+  'cut-release.sh',
+  'deploy-release.sh',
+  'changelog-section.sh',
+  'release-notes.sh',
+  'release-check.sh',
+] as const;
 const COMMAND_TIMEOUT_MS = 60_000;
 const CHANGELOG = `# Changelog
 
@@ -65,6 +71,14 @@ function runScript(cwd: string, script: string, args: string[] = [], env: NodeJS
   });
 }
 
+function fixturePackage(version: string, test = 'exit 0'): string {
+  return `${JSON.stringify({ name: 'stud', version, scripts: { test } }, null, 2)}\n`;
+}
+
+function fixtureLock(version: string): string {
+  return `${JSON.stringify({ name: 'stud', version, lockfileVersion: 3, requires: true, packages: { '': { name: 'stud', version } } }, null, 2)}\n`;
+}
+
 function makeRepo(): Repo {
   const base = mkdtempSync(join(tmpdir(), 'release-scripts-'));
   const origin = join(base, 'origin.git');
@@ -77,7 +91,8 @@ function makeRepo(): Repo {
   for (const name of RELEASE_SCRIPTS) {
     copyFileSync(join(ROOT, 'scripts', name), join(work, 'scripts', name));
   }
-  writeFileSync(join(work, 'package.json'), `${JSON.stringify({ name: 'stud', version: '0.0.1' }, null, 2)}\n`);
+  writeFileSync(join(work, 'package.json'), fixturePackage('0.0.1'));
+  writeFileSync(join(work, 'package-lock.json'), fixtureLock('0.0.1'));
   writeFileSync(join(work, 'CHANGELOG.md'), CHANGELOG);
   git(work, 'add', '-A');
   git(work, 'commit', '-m', 'chore: initial');
@@ -86,10 +101,10 @@ function makeRepo(): Repo {
   return { base, work, origin };
 }
 
-function withRepo(run: (repo: Repo) => void): void {
+function withRepo<T>(run: (repo: Repo) => T): T {
   const repo = makeRepo();
   try {
-    run(repo);
+    return run(repo);
   } finally {
     rmSync(repo.base, { recursive: true, force: true });
   }
@@ -131,6 +146,223 @@ test('changelog-section prints nothing for a whitespace-only body and still exit
   });
 });
 
+function writeChangelog(work: string, body: string): void {
+  writeFileSync(join(work, 'CHANGELOG.md'), `# Changelog\n\n${body}`);
+}
+
+test('release-notes prints the version notes and exits 0 when Unreleased is empty', () => {
+  withRepo(({ work }) => {
+    writeChangelog(work, '## [Unreleased]\n\n## [0.0.2] - 2026-11-06\n\n- Done.\n');
+    const result = runScript(work, 'release-notes.sh', ['0.0.2']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Done\./);
+  });
+});
+
+test('release-notes refuses a version whose section has no notes', () => {
+  withRepo(({ work }) => {
+    writeChangelog(work, '## [Unreleased]\n\n## [0.0.2] - 2026-11-06\n\n## [0.0.1] - 2026-01-01\n\n- Earlier.\n');
+    const result = runScript(work, 'release-notes.sh', ['0.0.2']);
+    assertRefused(result);
+    assert.match(result.stderr, /no notes under 0\.0\.2/);
+  });
+});
+
+test('release-notes refuses when Unreleased still has notes', () => {
+  withRepo(({ work }) => {
+    writeChangelog(work, '## [Unreleased]\n\n- Pending.\n\n## [0.0.2] - 2026-11-06\n\n- Done.\n');
+    const result = runScript(work, 'release-notes.sh', ['0.0.2']);
+    assertRefused(result);
+    assert.match(result.stderr, /notes under Unreleased/);
+  });
+});
+
+/** Stands in for gh: each reply is the output the real command gives for that call. */
+const FAKE_GH = [
+  '#!/bin/sh',
+  'echo "$*" >> "$FAKE_GH_LOG"',
+  'case "$1" in',
+  '  release)',
+  '    if [ -n "$FAKE_RELEASE_JSON" ]; then printf "%s\\n" "$FAKE_RELEASE_JSON"; exit 0; fi',
+  '    echo "${FAKE_RELEASE_ERR:-release not found}" >&2',
+  '    exit 1 ;;',
+  '  api)',
+  '    case "$2" in',
+  '      */git/ref/tags/*)',
+  '        if [ -n "$FAKE_REF" ]; then printf "%s\\n" "$FAKE_REF"; exit 0; fi',
+  '        echo "${FAKE_REF_ERR:-gh: Not Found (HTTP 404)}" >&2',
+  '        exit 1 ;;',
+  '      */git/tags/*)',
+  '        if [ -n "$FAKE_PEEL_ERR" ]; then echo "$FAKE_PEEL_ERR" >&2; exit 1; fi',
+  '        printf "%s\\n" "$FAKE_PEEL"; exit 0 ;;',
+  '    esac ;;',
+  'esac',
+  'echo "unexpected gh call: $*" >&2',
+  'exit 2',
+  '',
+].join('\n');
+
+const SHA = 'a'.repeat(40);
+const OTHER_SHA = 'b'.repeat(40);
+const ARCHIVE_JSON = JSON.stringify({ isDraft: false, assets: [{ name: 'stud-0.0.2.vsix' }] });
+
+interface GhReplies {
+  readonly release?: string;
+  readonly releaseErr?: string;
+  readonly ref?: string;
+  readonly refErr?: string;
+  readonly peel?: string;
+  readonly peelErr?: string;
+}
+
+function runReleaseCheck(replies: GhReplies, sha = SHA): { result: SpawnSyncReturns<string>; calls: string } {
+  const fakeDir = mkdtempSync(join(tmpdir(), 'fake-gh-'));
+  const log = join(fakeDir, 'calls.log');
+  mkdirSync(join(fakeDir, 'bin'));
+  writeFileSync(join(fakeDir, 'bin', 'gh'), FAKE_GH, { mode: 0o755 });
+  try {
+    return withRepo(({ work }) => {
+      const result = runScript(work, 'release-check.sh', ['0.0.2', sha], {
+        PATH: `${join(fakeDir, 'bin')}:${process.env.PATH ?? ''}`,
+        GH_TOKEN: 'test-token',
+        GH_REPO: 'Studapart/stud-vsx-extension',
+        FAKE_GH_LOG: log,
+        FAKE_RELEASE_JSON: replies.release ?? '',
+        FAKE_RELEASE_ERR: replies.releaseErr ?? '',
+        FAKE_REF: replies.ref ?? '',
+        FAKE_REF_ERR: replies.refErr ?? '',
+        FAKE_PEEL: replies.peel ?? '',
+        FAKE_PEEL_ERR: replies.peelErr ?? '',
+      });
+      return { result, calls: existsSync(log) ? readFileSync(log, 'utf8') : '' };
+    });
+  } finally {
+    rmSync(fakeDir, { recursive: true, force: true });
+  }
+}
+
+test('release-check publishes when there is no release and the tag does not exist yet', () => {
+  const { result } = runReleaseCheck({ releaseErr: 'release not found', refErr: 'gh: Not Found (HTTP 404)' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'publish');
+});
+
+test('release-check publishes when the existing tag names the built commit', () => {
+  const { result } = runReleaseCheck({ ref: `commit ${SHA}` });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'publish');
+});
+
+test('release-check skips a release that already has the archive without looking at the tag', () => {
+  const { result, calls } = runReleaseCheck({ release: ARCHIVE_JSON });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'skip');
+  assert.doesNotMatch(calls, /git\/ref/);
+});
+
+test('release-check publishes when an annotated tag peels to the built commit', () => {
+  const { result, calls } = runReleaseCheck({ ref: 'tag tag-object', peel: SHA });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'publish');
+  assert.match(calls, /git\/tags\/tag-object/);
+});
+
+test('release-check refuses when the annotated tag cannot be read', () => {
+  const { result } = runReleaseCheck({ ref: 'tag tag-object', peelErr: 'gh: HTTP 500 (HTTP 500)' });
+  assertRefused(result);
+  assert.match(result.stderr, /could not read annotated tag v0\.0\.2/);
+});
+
+const REAL_BASH = execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim();
+
+/** A PATH that can run bash and the named tools, so command -v reports real absences. */
+function runWithTools(tools: readonly string[], repo: string | null = 'Studapart/stud-vsx-extension'): SpawnSyncReturns<string> {
+  const bin = join(mkdtempSync(join(tmpdir(), 'release-tools-')), 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'bash'), `#!/bin/sh\nexec ${JSON.stringify(REAL_BASH)} "$@"\n`, { mode: 0o755 });
+  for (const tool of tools) {
+    writeFileSync(join(bin, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  const env = testEnv({
+    PATH: bin,
+    GH_TOKEN: 'test-token',
+    ...(repo === null ? {} : { GH_REPO: repo }),
+  });
+  if (repo === null) {
+    delete env.GH_REPO;
+  }
+  try {
+    return spawnSync('bash', [join('scripts', 'release-check.sh'), '0.0.2', SHA], {
+      cwd: ROOT,
+      env,
+      encoding: 'utf8',
+      timeout: COMMAND_TIMEOUT_MS,
+    });
+  } finally {
+    rmSync(resolve(bin, '..'), { recursive: true, force: true });
+  }
+}
+
+test('release-check refuses when gh is missing', () => {
+  const result = runWithTools([]);
+  assertRefused(result);
+  assert.match(result.stderr, /gh is required/);
+});
+
+test('release-check refuses when jq is missing', () => {
+  const result = runWithTools(['gh']);
+  assertRefused(result);
+  assert.match(result.stderr, /jq is required/);
+});
+
+test('release-check refuses when GH_REPO is unset', () => {
+  const result = runWithTools(['gh', 'jq'], null);
+  assertRefused(result);
+  assert.match(result.stderr, /GH_REPO is required/);
+});
+
+test('release-check refuses when GH_REPO is empty', () => {
+  const result = runWithTools(['gh', 'jq'], '');
+  assertRefused(result);
+  assert.match(result.stderr, /GH_REPO is required/);
+});
+
+test('release-check refuses a release lookup error that only contains Not Found', () => {
+  const { result } = runReleaseCheck({ releaseErr: 'gh: Not Found (HTTP 404)' });
+  assertRefused(result);
+  assert.match(result.stderr, /could not look up release v0\.0\.2/);
+});
+
+test('release-check refuses a release that exists without the archive', () => {
+  const { result } = runReleaseCheck({ release: JSON.stringify({ isDraft: false, assets: [{ name: 'other.txt' }] }) });
+  assertRefused(result);
+  assert.match(result.stderr, /exists without stud-0\.0\.2\.vsix/);
+});
+
+test('release-check refuses a draft release', () => {
+  const { result } = runReleaseCheck({ release: JSON.stringify({ isDraft: true, assets: [] }) });
+  assertRefused(result);
+  assert.match(result.stderr, /v0\.0\.2 is a draft/);
+});
+
+test('release-check refuses when the release lookup fails for another reason', () => {
+  const { result } = runReleaseCheck({ releaseErr: 'gh: HTTP 500 (HTTP 500)' });
+  assertRefused(result);
+  assert.match(result.stderr, /could not look up release v0\.0\.2/);
+});
+
+test('release-check refuses a tag that points at another commit', () => {
+  const { result } = runReleaseCheck({ ref: 'tag tag-object', peel: OTHER_SHA });
+  assertRefused(result);
+  assert.match(result.stderr, new RegExp(`tag v0\\.0\\.2 points at ${OTHER_SHA}, not ${SHA}`));
+});
+
+test('release-check refuses when the tag lookup fails for another reason', () => {
+  const { result } = runReleaseCheck({ refErr: 'gh: HTTP 500 (HTTP 500)' });
+  assertRefused(result);
+  assert.match(result.stderr, /could not look up tag v0\.0\.2/);
+});
+
 test('cut-release patch by default bumps the version, moves Unreleased notes under the new heading, and commits', () => {
   withRepo(({ work }) => {
     const result = runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' });
@@ -141,6 +373,15 @@ test('cut-release patch by default bumps the version, moves Unreleased notes und
     assert.match(changelog, /## \[Unreleased\]\n\n## \[0\.0\.2\] - 2026-11-06\n\n- First change\./);
     assert.equal(runScript(work, 'changelog-section.sh', ['CHANGELOG.md', 'Unreleased']).stdout.trim(), '');
     assert.equal(git(work, 'log', '-1', '--format=%s'), 'chore(release): bump version to 0.0.2');
+  });
+});
+
+test('cut-release bumps the lockfile version along with the manifest', () => {
+  withRepo(({ work }) => {
+    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    const lock = JSON.parse(readFileSync(join(work, 'package-lock.json'), 'utf8'));
+    assert.equal(lock.version, '0.0.2');
+    assert.equal(lock.packages[''].version, '0.0.2');
   });
 });
 
@@ -336,6 +577,21 @@ test('deploy-release deletes the release branch from origin after a successful d
   });
 });
 
+test('deploy-release still succeeds when the release branch cannot be deleted on origin', () => {
+  withRepo(({ work, origin }) => {
+    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    git(work, 'push', 'origin', 'release/v0.0.2');
+    rejectRefOnOrigin(origin, 'refs/heads/release/v0.0.2');
+    const result = runScript(work, 'deploy-release.sh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /warning: deployed v0\.0\.2, but could not remove release\/v0\.0\.2/);
+    assert.match(git(origin, 'show', 'master:package.json'), /"version": "0\.0\.2"/);
+    assert.equal(git(origin, 'rev-parse', 'v0.0.2^{commit}'), git(origin, 'rev-parse', 'master'));
+    assert.equal(git(origin, 'rev-parse', 'develop'), git(origin, 'rev-parse', 'master'));
+    assert.notEqual(git(origin, 'branch', '--list', 'release/v0.0.2'), '');
+  });
+});
+
 test('deploy-release refuses a clone without a local master', () => {
   withRepo(({ work, origin }) => {
     assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
@@ -349,32 +605,179 @@ test('deploy-release refuses a clone without a local master', () => {
   });
 });
 
-test('release workflow runs only on master and checks notes and archive before npm ci', () => {
-  const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-  assert.match(workflow, /on:\n {2}push:\n {4}branches:\n {6}- master\n/);
-  assert.doesNotMatch(workflow, /tags:/);
-  assert.match(workflow, /concurrency:\n {2}group: release-master\n {2}cancel-in-progress: false/);
+function remoteRefs(origin: string): string {
+  return git(origin, 'for-each-ref', '--format=%(refname) %(objectname)');
+}
 
-  const at = (text: string): number => {
-    const index = workflow.indexOf(text);
-    assert.notEqual(index, -1, `missing ${text}`);
-    return index;
-  };
-  assert.ok(at('gh release view') < at('npm ci'));
-  assert.ok(at('changelog-section.sh CHANGELOG.md') < at('npm ci'));
-  assert.ok(at('npm run package') < at('gh release create'));
-  assert.match(workflow, /TARGET_SHA: \$\{\{ github\.sha \}\}/);
-  assert.match(workflow, /gh release create[^\n]*--target "\$TARGET_SHA"/);
-  assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
-  assert.match(workflow, /--notes-file "\$RUNNER_TEMP\/release-notes\.md"/);
+function cutReleaseBranch(work: string): void {
+  assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+}
+
+test('cut-release refuses when develop is behind origin/develop', () => {
+  withRepo(({ work }) => {
+    git(work, 'commit', '--allow-empty', '-m', 'chore: remote only');
+    git(work, 'push', 'origin', 'develop');
+    git(work, 'reset', '--hard', 'HEAD~1');
+    assertRefused(runScript(work, 'cut-release.sh'));
+    assert.equal(git(work, 'branch', '--show-current'), 'develop');
+  });
 });
 
-test('package-vsix names the archive from package.json and does not write the version', () => {
+test('cut-release refuses when run from a branch other than develop', () => {
+  withRepo(({ work }) => {
+    git(work, 'checkout', '-b', 'feature/other');
+    assertRefused(runScript(work, 'cut-release.sh'));
+    assert.equal(git(work, 'branch', '--show-current'), 'feature/other');
+  });
+});
+
+test('deploy-release refuses when the release notes fail and pushes nothing', () => {
+  withRepo(({ work, origin }) => {
+    cutReleaseBranch(work);
+    const changelog = readFileSync(join(work, 'CHANGELOG.md'), 'utf8');
+    writeFileSync(join(work, 'CHANGELOG.md'), changelog.replace('## [Unreleased]', '## [Unreleased]\n\n- Late change.'));
+    git(work, 'commit', '-am', 'docs: late change');
+    const before = remoteRefs(origin);
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /release notes check failed; nothing was pushed/);
+    assert.equal(remoteRefs(origin), before);
+  });
+});
+
+test('deploy-release refuses when npm ci fails and pushes nothing', () => {
+  withRepo(({ work, origin }) => {
+    cutReleaseBranch(work);
+    writeFileSync(join(work, 'package-lock.json'), '{\n');
+    git(work, 'commit', '-am', 'chore: break the lock');
+    const before = remoteRefs(origin);
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /npm ci failed; nothing was pushed/);
+    assert.equal(remoteRefs(origin), before);
+  });
+});
+
+test('deploy-release refuses when npm test fails and pushes nothing', () => {
+  withRepo(({ work, origin }) => {
+    cutReleaseBranch(work);
+    writeFileSync(join(work, 'package.json'), fixturePackage('0.0.2', 'exit 1'));
+    git(work, 'commit', '-am', 'chore: break the tests');
+    const before = remoteRefs(origin);
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /npm test failed; nothing was pushed/);
+    assert.equal(remoteRefs(origin), before);
+  });
+});
+
+test('deploy-release refuses a package.json version that differs from the branch and pushes nothing', () => {
+  withRepo(({ work, origin }) => {
+    cutReleaseBranch(work);
+    writeFileSync(join(work, 'package.json'), fixturePackage('0.0.9'));
+    git(work, 'commit', '-am', 'chore: wrong version');
+    const before = remoteRefs(origin);
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /package\.json version is not 0\.0\.2/);
+    assert.equal(remoteRefs(origin), before);
+  });
+});
+
+test('deploy-release refuses uncommitted changes and pushes nothing', () => {
+  withRepo(({ work, origin }) => {
+    cutReleaseBranch(work);
+    writeFileSync(join(work, 'scratch.txt'), 'untracked\n');
+    const before = remoteRefs(origin);
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /working tree is not clean/);
+    assert.equal(remoteRefs(origin), before);
+  });
+});
+
+test('deploy-release refuses when origin/master has commits the release branch lacks and pushes nothing', () => {
+  withRepo(({ work, origin }) => {
+    cutReleaseBranch(work);
+    const releaseBranch = git(work, 'branch', '--show-current');
+    git(work, 'checkout', 'master');
+    git(work, 'commit', '--allow-empty', '-m', 'chore: master only');
+    git(work, 'push', 'origin', 'master');
+    git(work, 'checkout', releaseBranch);
+    const before = remoteRefs(origin);
+    const result = runScript(work, 'deploy-release.sh');
+    assertRefused(result);
+    assert.match(result.stderr, /origin\/master has commits/);
+    assert.equal(remoteRefs(origin), before);
+  });
+});
+
+function assertActionsPinned(workflow: string): void {
+  for (const [, ref] of workflow.matchAll(/uses: (\S+)/g)) {
+    assert.match(ref, /@[0-9a-f]{40}$/, `action is not pinned to a full commit SHA: ${ref}`);
+  }
+}
+
+test('release workflow builds with a read-only token and publishes from its own job', () => {
+  const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const build = workflow.slice(workflow.indexOf('\n  build:\n'), workflow.indexOf('\n  publish:\n'));
+  const publish = workflow.slice(workflow.indexOf('\n  publish:\n'));
+  const at = (text: string, needle: string): number => {
+    const index = text.indexOf(needle);
+    assert.notEqual(index, -1, `missing ${needle}`);
+    return index;
+  };
+
+  assert.match(workflow, /on:\n {2}push:\n {4}branches:\n {6}- master\n/);
+  assert.doesNotMatch(workflow, /tags:/);
+  assert.match(workflow, /^permissions:\n {2}contents: read$/m);
+  assert.match(workflow, /concurrency:\n {2}group: release-master\n {2}cancel-in-progress: false/);
+  assert.match(workflow, /\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
+  assert.doesNotMatch(build, /contents: write/);
+  assert.match(publish, /permissions:\n {6}contents: write/);
+  assert.equal(publish.match(/GH_TOKEN: /g)?.length, 2);
+  assert.doesNotMatch(publish, /npm|setup-node/);
+  assert.ok(at(build, 'release-check.sh') < at(build, 'npm ci'));
+  assert.ok(at(build, 'release-notes.sh') < at(build, 'npm ci'));
+  assert.equal(build.match(/if: steps\.check\.outputs\.decision == 'publish'/g)?.length, 5);
+  assert.ok(at(publish, 'release-check.sh') < at(publish, 'gh release create'));
+  assert.ok(at(publish, 'download-artifact') < at(publish, 'gh release create'));
+  assert.equal(workflow.match(/with:\n {10}name: release\n/g)?.length, 2);
+  assert.match(
+    publish,
+    /gh release create "v\$VERSION" "\$RUNNER_TEMP\/release\/stud-\$VERSION\.vsix" --target "\$TARGET_SHA" --title "v\$VERSION" --notes-file "\$RUNNER_TEMP\/release\/release-notes\.md"/,
+  );
+  assert.equal(workflow.match(/persist-credentials: false/g)?.length, workflow.match(/actions\/checkout@/g)?.length);
+  assertActionsPinned(workflow);
+});
+
+test('package-vsix builds from the locked packaging tree and does not write the version', () => {
   const script = readFileSync(join(ROOT, 'scripts/package-vsix.sh'), 'utf8');
-  assert.doesNotMatch(script, /npm version/);
-  assert.match(script, /stud-\$version\.vsix/);
-  assert.match(script, /@vscode\/vsce@4\.1\.0/);
+  assert.doesNotMatch(script, /npm version|npx/);
+  assert.match(script, /npm ci --prefix scripts\/vsce --ignore-scripts/);
+  assert.match(script, /scripts\/vsce\/node_modules\/\.bin\/vsce package --out "stud-\$version\.vsix"/);
+});
+
+test('the packaging lock pins @vscode/vsce 4.1.0 exactly', () => {
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'scripts/vsce/package.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(join(ROOT, 'scripts/vsce/package-lock.json'), 'utf8'));
+  assert.deepEqual(manifest.dependencies, { '@vscode/vsce': '4.1.0' });
+  assert.equal(lock.packages['node_modules/@vscode/vsce'].version, '4.1.0');
+});
+
+test('pull requests into develop run the tests and linters and never publish', () => {
+  const ci = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(ci, /on:\n {2}pull_request:\n {4}branches:\n {6}- develop\n/);
+  assert.doesNotMatch(ci, /\n {2}push:/);
+  assert.match(ci, /^permissions:\n {2}contents: read$/m);
+  assert.doesNotMatch(ci, /contents: write|gh release|upload-artifact|download-artifact/);
+  assert.match(ci, /node-version: 18/);
+  assert.match(ci, /npm test/);
+  assert.match(ci, /npm run package/);
+  assert.match(ci, /rhysd\/actionlint@sha256:[0-9a-f]{64}/);
+  assert.match(ci, /--entrypoint shellcheck/);
+  assert.equal(ci.match(/persist-credentials: false/g)?.length, ci.match(/actions\/checkout@/g)?.length);
+  assertActionsPinned(ci);
 });
 
 test('release tooling stays out of the VSIX', () => {
@@ -383,12 +786,12 @@ test('release tooling stays out of the VSIX', () => {
   assert.ok(ignore.includes('.github/**'));
 });
 
-test('manifest and lockfile carry version 0.0.1 and the release scripts', () => {
+test('manifest and lockfile carry one X.Y.Z version and the release scripts', () => {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
-  assert.equal(manifest.version, '0.0.1');
-  assert.equal(lock.version, '0.0.1');
-  assert.equal(lock.packages[''].version, '0.0.1');
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(lock.version, manifest.version);
+  assert.equal(lock.packages[''].version, manifest.version);
   assert.equal(manifest.scripts.release, 'scripts/cut-release.sh');
   assert.equal(manifest.scripts.deploy, 'scripts/deploy-release.sh');
 });

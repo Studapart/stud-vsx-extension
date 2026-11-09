@@ -6,16 +6,19 @@ on:
       - master
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-master
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      decision: ${{ steps.check.outputs.decision }}
     steps:
       - name: Check out the pushed commit
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -32,64 +35,86 @@ jobs:
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Skip when the release already has the archive
-        id: existing
+      - name: Decide whether to publish
+        id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.version.outputs.version }}
+          TARGET_SHA: ${{ github.sha }}
         run: |
-          tag="v$VERSION"
-          if details="$(gh release view "$tag" --json isDraft,assets 2>"$RUNNER_TEMP/gh.err")"; then
-            if [ "$(jq -r .isDraft <<< "$details")" = true ]; then
-              echo "error: $tag is a draft; publish or delete it, then re-run" >&2
-              exit 1
-            fi
-            if jq -e --arg asset "stud-$VERSION.vsix" '.assets[].name | select(. == $asset)' <<< "$details" > /dev/null; then
-              echo "$tag already has stud-$VERSION.vsix; nothing to publish"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "error: release $tag exists without stud-$VERSION.vsix" >&2
-              exit 1
-            fi
-          elif ! grep -qi 'not found' "$RUNNER_TEMP/gh.err"; then
-            cat "$RUNNER_TEMP/gh.err" >&2
-            exit 1
-          fi
+          decision="$(bash scripts/release-check.sh "$VERSION" "$TARGET_SHA")"
+          printf 'decision=%s\n' "$decision" >> "$GITHUB_OUTPUT"
 
       - name: Check the release notes
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.check.outputs.decision == 'publish'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          notes="$RUNNER_TEMP/release-notes.md"
-          bash scripts/changelog-section.sh CHANGELOG.md "$VERSION" > "$notes"
-          if [ -z "$(tr -d '[:space:]' < "$notes")" ]; then
-            echo "error: CHANGELOG.md has no notes under $VERSION" >&2
-            exit 1
-          fi
-          if [ -n "$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased 2>/dev/null | tr -d '[:space:]')" ]; then
-            echo "error: CHANGELOG.md has notes under Unreleased after the cut" >&2
-            exit 1
-          fi
+          mkdir "$RUNNER_TEMP/release"
+          bash scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/release/release-notes.md"
 
       - name: Set up Node.js
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.check.outputs.decision == 'publish'
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
 
       - name: Install dependencies
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.check.outputs.decision == 'publish'
         run: npm ci
 
       - name: Build the archive
-        if: steps.existing.outputs.skip != 'true'
-        run: npm run package
+        if: steps.check.outputs.decision == 'publish'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm run package
+          mv "stud-$VERSION.vsix" "$RUNNER_TEMP/release/"
 
-      - name: Create the release
-        if: steps.existing.outputs.skip != 'true'
+      - name: Upload the release files
+        if: steps.check.outputs.decision == 'publish'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: needs.build.outputs.decision == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TARGET_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the release again with the write token
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-          TARGET_SHA: ${{ github.sha }}
-        run: gh release create "v$VERSION" "stud-$VERSION.vsix" --target "$TARGET_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
+          GH_REPO: ${{ github.repository }}
+        run: |
+          decision="$(bash scripts/release-check.sh "$VERSION" "$TARGET_SHA")"
+          if [ "$decision" != publish ]; then
+            echo "error: v$VERSION is no longer publishable ($decision)" >&2
+            exit 1
+          fi
+
+      - name: Download the release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "v$VERSION" "$RUNNER_TEMP/release/stud-$VERSION.vsix" --target "$TARGET_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/release/release-notes.md"

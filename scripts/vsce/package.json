@@ -1,0 +1,7 @@
+{
+  "name": "stud-packaging",
+  "private": true,
+  "dependencies": {
+    "@vscode/vsce": "4.1.0"
+  }
+}
