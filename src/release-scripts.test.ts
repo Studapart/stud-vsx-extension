@@ -368,7 +368,8 @@ test('release-check refuses a release that exists without the archive', () => {
 test('release-check refuses a draft release', () => {
   const { result } = runReleaseCheck({ release: JSON.stringify({ isDraft: true, assets: [] }) });
   assertRefused(result);
-  assert.match(result.stderr, /v0\.0\.2 is a draft/);
+  assert.match(result.stderr, /v0\.0\.2 is a draft; delete it, then re-run/);
+  assert.doesNotMatch(result.stderr, /publish or delete/);
 });
 
 test('release-check refuses when the release lookup fails for another reason', () => {
@@ -761,15 +762,19 @@ test('release workflow builds with a read-only token and publishes from its own 
   assert.equal(publish.match(/GH_TOKEN: /g)?.length, 2);
   assert.doesNotMatch(publish, /npm|setup-node/);
   assert.ok(at(build, 'release-check.sh') < at(build, 'npm ci'));
-  assert.ok(at(build, 'release-notes.sh') < at(build, 'npm ci'));
-  assert.equal(build.match(/if: steps\.check\.outputs\.decision == 'publish'/g)?.length, 5);
-  assert.ok(at(publish, 'release-check.sh') < at(publish, 'gh release create'));
+  assert.doesNotMatch(build, /release-notes\.sh/);
+  assert.match(build, /path: \$\{\{ runner\.temp \}\}\/release\/stud-\$\{\{ steps\.version\.outputs\.version \}\}\.vsix/);
+  assert.equal(build.match(/if: steps\.check\.outputs\.decision == 'publish'/g)?.length, 4);
+  assert.ok(at(publish, 'release-check.sh') < at(publish, 'release-notes.sh'));
+  assert.ok(at(publish, 'release-notes.sh') < at(publish, 'gh release create'));
   assert.ok(at(publish, 'download-artifact') < at(publish, 'gh release create'));
   assert.equal(workflow.match(/with:\n {10}name: release\n/g)?.length, 2);
+  assert.match(publish, /notes="\$\(bash scripts\/release-notes\.sh "\$VERSION"\)"/);
   assert.match(
     publish,
-    /gh release create "v\$VERSION" "\$RUNNER_TEMP\/release\/stud-\$VERSION\.vsix" --target "\$TARGET_SHA" --title "v\$VERSION" --notes-file "\$RUNNER_TEMP\/release\/release-notes\.md"/,
+    /gh release create "v\$VERSION" "\$RUNNER_TEMP\/release\/stud-\$VERSION\.vsix" --target "\$TARGET_SHA" --title "v\$VERSION" --notes "\$notes"/,
   );
+  assert.doesNotMatch(workflow, /--notes-file|release-notes\.md/);
   assert.equal(workflow.match(/persist-credentials: false/g)?.length, workflow.match(/actions\/checkout@/g)?.length);
   assertActionsPinned(workflow);
 });
@@ -807,6 +812,7 @@ test('release tooling stays out of the VSIX', () => {
   const ignore = readFileSync(join(ROOT, '.vscodeignore'), 'utf8').split('\n');
   assert.ok(ignore.includes('scripts/**'));
   assert.ok(ignore.includes('.github/**'));
+  assert.ok(ignore.includes('documentation/**'));
 });
 
 test('manifest and lockfile carry one X.Y.Z version and the release scripts', () => {

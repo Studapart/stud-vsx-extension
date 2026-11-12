@@ -46,14 +46,6 @@ jobs:
           decision="$(bash scripts/release-check.sh "$VERSION" "$TARGET_SHA")"
           printf 'decision=%s\n' "$decision" >> "$GITHUB_OUTPUT"
 
-      - name: Check the release notes
-        if: steps.check.outputs.decision == 'publish'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          mkdir "$RUNNER_TEMP/release"
-          bash scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/release/release-notes.md"
-
       - name: Set up Node.js
         if: steps.check.outputs.decision == 'publish'
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -70,6 +62,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           npm run package
+          mkdir "$RUNNER_TEMP/release"
           mv "stud-$VERSION.vsix" "$RUNNER_TEMP/release/"
 
       - name: Upload the release files
@@ -77,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release
-          path: ${{ runner.temp }}/release/
+          path: ${{ runner.temp }}/release/stud-${{ steps.version.outputs.version }}.vsix
           if-no-files-found: error
 
   publish:
@@ -117,4 +110,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "v$VERSION" "$RUNNER_TEMP/release/stud-$VERSION.vsix" --target "$TARGET_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/release/release-notes.md"
+        run: |
+          notes="$(bash scripts/release-notes.sh "$VERSION")"
+          gh release create "v$VERSION" "$RUNNER_TEMP/release/stud-$VERSION.vsix" --target "$TARGET_SHA" --title "v$VERSION" --notes "$notes"

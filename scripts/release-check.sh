@@ -28,7 +28,7 @@ trap 'rm -f "$err"' EXIT
 
 if details="$(gh release view "$tag" --json isDraft,assets 2>"$err")"; then
   if [ "$(jq -r .isDraft <<< "$details")" = true ]; then
-    die "$tag is a draft; publish or delete it, then re-run"
+    die "$tag is a draft; delete it, then re-run"
   fi
   if jq -e --arg asset "$archive" '.assets[].name | select(. == $asset)' <<< "$details" > /dev/null; then
     echo skip
