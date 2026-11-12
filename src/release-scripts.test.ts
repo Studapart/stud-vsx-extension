@@ -110,6 +110,14 @@ function withRepo<T>(run: (repo: Repo) => T): T {
   }
 }
 
+function remoteRefs(origin: string): string {
+  return git(origin, 'for-each-ref', '--format=%(refname) %(objectname)');
+}
+
+function cutReleaseBranch(work: string): void {
+  assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+}
+
 function readVersion(dir: string): string {
   return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version;
 }
@@ -276,7 +284,12 @@ test('release-check refuses when the annotated tag cannot be read', () => {
 const REAL_BASH = execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim();
 
 /** A PATH that can run bash and the named tools, so command -v reports real absences. */
-function runWithTools(tools: readonly string[], repo: string | null = 'Studapart/stud-vsx-extension'): SpawnSyncReturns<string> {
+function runWithTools(
+  tools: readonly string[],
+  repo: string | null = 'Studapart/stud-vsx-extension',
+  version = '0.0.2',
+  sha = SHA,
+): SpawnSyncReturns<string> {
   const bin = join(mkdtempSync(join(tmpdir(), 'release-tools-')), 'bin');
   mkdirSync(bin);
   writeFileSync(join(bin, 'bash'), `#!/bin/sh\nexec ${JSON.stringify(REAL_BASH)} "$@"\n`, { mode: 0o755 });
@@ -292,7 +305,7 @@ function runWithTools(tools: readonly string[], repo: string | null = 'Studapart
     delete env.GH_REPO;
   }
   try {
-    return spawnSync('bash', [join('scripts', 'release-check.sh'), '0.0.2', SHA], {
+    return spawnSync('bash', [join('scripts', 'release-check.sh'), version, sha], {
       cwd: ROOT,
       env,
       encoding: 'utf8',
@@ -327,6 +340,18 @@ test('release-check refuses when GH_REPO is empty', () => {
   assert.match(result.stderr, /GH_REPO is required/);
 });
 
+test('release-check refuses a version that is not X.Y.Z', () => {
+  const result = runWithTools(['gh', 'jq'], 'Studapart/stud-vsx-extension', '1.2');
+  assertRefused(result);
+  assert.match(result.stderr, /version '1\.2' is not X\.Y\.Z/);
+});
+
+test('release-check refuses a sha that is not a commit', () => {
+  const result = runWithTools(['gh', 'jq'], 'Studapart/stud-vsx-extension', '0.0.2', 'abc');
+  assertRefused(result);
+  assert.match(result.stderr, /'abc' is not a commit SHA/);
+});
+
 test('release-check refuses a release lookup error that only contains Not Found', () => {
   const { result } = runReleaseCheck({ releaseErr: 'gh: Not Found (HTTP 404)' });
   assertRefused(result);
@@ -357,6 +382,13 @@ test('release-check refuses a tag that points at another commit', () => {
   assert.match(result.stderr, new RegExp(`tag v0\\.0\\.2 points at ${OTHER_SHA}, not ${SHA}`));
 });
 
+test('release-check refuses a lightweight tag that points at another commit', () => {
+  const { result, calls } = runReleaseCheck({ ref: `commit ${OTHER_SHA}` });
+  assertRefused(result);
+  assert.match(result.stderr, new RegExp(`tag v0\\.0\\.2 points at ${OTHER_SHA}, not ${SHA}`));
+  assert.doesNotMatch(calls, /git\/tags\//);
+});
+
 test('release-check refuses when the tag lookup fails for another reason', () => {
   const { result } = runReleaseCheck({ refErr: 'gh: HTTP 500 (HTTP 500)' });
   assertRefused(result);
@@ -365,8 +397,7 @@ test('release-check refuses when the tag lookup fails for another reason', () =>
 
 test('cut-release patch by default bumps the version, moves Unreleased notes under the new heading, and commits', () => {
   withRepo(({ work }) => {
-    const result = runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' });
-    assert.equal(result.status, 0, result.stderr);
+    cutReleaseBranch(work);
     assert.equal(git(work, 'branch', '--show-current'), 'release/v0.0.2');
     assert.equal(readVersion(work), '0.0.2');
     const changelog = readFileSync(join(work, 'CHANGELOG.md'), 'utf8');
@@ -378,7 +409,7 @@ test('cut-release patch by default bumps the version, moves Unreleased notes und
 
 test('cut-release bumps the lockfile version along with the manifest', () => {
   withRepo(({ work }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     const lock = JSON.parse(readFileSync(join(work, 'package-lock.json'), 'utf8'));
     assert.equal(lock.version, '0.0.2');
     assert.equal(lock.packages[''].version, '0.0.2');
@@ -390,8 +421,7 @@ test('cut-release inserts the version heading when Unreleased has a trailing spa
     writeFileSync(join(work, 'CHANGELOG.md'), CHANGELOG.replace('## [Unreleased]', '## [Unreleased] '));
     git(work, 'commit', '-am', 'chore: trailing space');
     git(work, 'push', 'origin', 'develop');
-    const result = runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' });
-    assert.equal(result.status, 0, result.stderr);
+    cutReleaseBranch(work);
     assert.match(readFileSync(join(work, 'CHANGELOG.md'), 'utf8'), /## \[0\.0\.2\] - 2026-11-06/);
   });
 });
@@ -476,9 +506,27 @@ test('cut-release refuses a dirty working tree', () => {
   });
 });
 
+test('cut-release refuses when develop is behind origin/develop', () => {
+  withRepo(({ work }) => {
+    git(work, 'commit', '--allow-empty', '-m', 'chore: remote only');
+    git(work, 'push', 'origin', 'develop');
+    git(work, 'reset', '--hard', 'HEAD~1');
+    assertRefused(runScript(work, 'cut-release.sh'));
+    assert.equal(git(work, 'branch', '--show-current'), 'develop');
+  });
+});
+
+test('cut-release refuses when run from a branch other than develop', () => {
+  withRepo(({ work }) => {
+    git(work, 'checkout', '-b', 'feature/other');
+    assertRefused(runScript(work, 'cut-release.sh'));
+    assert.equal(git(work, 'branch', '--show-current'), 'feature/other');
+  });
+});
+
 test('deploy-release merges into master, tags it, rebases develop, and pushes all three', () => {
   withRepo(({ work, origin }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     const result = runScript(work, 'deploy-release.sh');
     assert.equal(result.status, 0, result.stderr);
 
@@ -501,7 +549,7 @@ test('deploy-release refuses when not run from a release branch', () => {
 
 test('deploy-release refuses when local master has commits origin does not have', () => {
   withRepo(({ work, origin }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     const releaseBranch = git(work, 'branch', '--show-current');
     git(work, 'checkout', 'master');
     git(work, 'commit', '--allow-empty', '-m', 'chore: local only');
@@ -516,7 +564,7 @@ test('deploy-release refuses when local master has commits origin does not have'
 
 test('deploy-release stops at a rebase conflict and publishes nothing', () => {
   withRepo(({ work, origin }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     const releaseBranch = git(work, 'branch', '--show-current');
     git(work, 'checkout', 'develop');
     writeFileSync(join(work, 'CHANGELOG.md'), CHANGELOG.replace('- First change.', '- First change, reworded.'));
@@ -542,7 +590,7 @@ function rejectRefOnOrigin(origin: string, ref: string): void {
 test('deploy-release publishes neither the tag nor master when the master push is rejected', () => {
   withRepo(({ work, origin }) => {
     rejectRefOnOrigin(origin, 'refs/heads/master');
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     const masterBefore = git(origin, 'rev-parse', 'master');
     const developBefore = git(origin, 'rev-parse', 'develop');
     const result = runScript(work, 'deploy-release.sh');
@@ -557,7 +605,7 @@ test('deploy-release publishes neither the tag nor master when the master push i
 test('deploy-release keeps master and the tag when the develop push is rejected', () => {
   withRepo(({ work, origin }) => {
     rejectRefOnOrigin(origin, 'refs/heads/develop');
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     const developBefore = git(origin, 'rev-parse', 'develop');
     const result = runScript(work, 'deploy-release.sh');
     assert.notEqual(result.status, 0);
@@ -570,7 +618,7 @@ test('deploy-release keeps master and the tag when the develop push is rejected'
 
 test('deploy-release deletes the release branch from origin after a successful deploy', () => {
   withRepo(({ work, origin }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     git(work, 'push', 'origin', 'release/v0.0.2');
     assert.equal(runScript(work, 'deploy-release.sh').status, 0);
     assert.equal(git(origin, 'branch', '--list', 'release/v0.0.2'), '');
@@ -579,7 +627,7 @@ test('deploy-release deletes the release branch from origin after a successful d
 
 test('deploy-release still succeeds when the release branch cannot be deleted on origin', () => {
   withRepo(({ work, origin }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     git(work, 'push', 'origin', 'release/v0.0.2');
     rejectRefOnOrigin(origin, 'refs/heads/release/v0.0.2');
     const result = runScript(work, 'deploy-release.sh');
@@ -594,7 +642,7 @@ test('deploy-release still succeeds when the release branch cannot be deleted on
 
 test('deploy-release refuses a clone without a local master', () => {
   withRepo(({ work, origin }) => {
-    assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+    cutReleaseBranch(work);
     git(work, 'checkout', 'release/v0.0.2');
     git(work, 'branch', '-D', 'master');
     const masterBefore = git(origin, 'rev-parse', 'master');
@@ -602,32 +650,6 @@ test('deploy-release refuses a clone without a local master', () => {
     assertRefused(result);
     assert.match(result.stderr, /no local master/);
     assert.equal(git(origin, 'rev-parse', 'master'), masterBefore);
-  });
-});
-
-function remoteRefs(origin: string): string {
-  return git(origin, 'for-each-ref', '--format=%(refname) %(objectname)');
-}
-
-function cutReleaseBranch(work: string): void {
-  assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
-}
-
-test('cut-release refuses when develop is behind origin/develop', () => {
-  withRepo(({ work }) => {
-    git(work, 'commit', '--allow-empty', '-m', 'chore: remote only');
-    git(work, 'push', 'origin', 'develop');
-    git(work, 'reset', '--hard', 'HEAD~1');
-    assertRefused(runScript(work, 'cut-release.sh'));
-    assert.equal(git(work, 'branch', '--show-current'), 'develop');
-  });
-});
-
-test('cut-release refuses when run from a branch other than develop', () => {
-  withRepo(({ work }) => {
-    git(work, 'checkout', '-b', 'feature/other');
-    assertRefused(runScript(work, 'cut-release.sh'));
-    assert.equal(git(work, 'branch', '--show-current'), 'feature/other');
   });
 });
 
