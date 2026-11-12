@@ -1,5 +1,6 @@
 .cursor/**
 .github/**
+documentation/**
 .vscode/**
 scripts/**
 resources/icon-a.png
