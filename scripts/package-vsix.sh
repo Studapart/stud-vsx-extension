@@ -24,4 +24,5 @@ fi
 version="$(node -p 'require("./package.json").version')"
 
 npm test
-npx --yes @vscode/vsce@4.1.0 package --out "stud-$version.vsix"
+npm ci --prefix scripts/vsce --ignore-scripts --no-audit --no-fund
+scripts/vsce/node_modules/.bin/vsce package --out "stud-$version.vsix"

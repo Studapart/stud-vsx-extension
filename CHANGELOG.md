@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-12
+
+- Build the release archive with a token that can only read repository contents. The job that creates the GitHub release runs no npm code and holds the only write token, so a compromised build dependency cannot change a release.
+- Publish a release only when its tag names the built commit. A draft release or a release that exists without its archive stops the release workflow with a message; delete the draft and re-run it.
+- Check the release notes and run the tests before `npm run deploy` pushes anything. A failed check stops the deploy with nothing pushed.
+- Warn instead of failing the deploy when the release branch cannot be deleted after the tag, `master` and `develop` are pushed.
+- Run the tests on Node.js 18, `actionlint` and `shellcheck`, and a package build on every pull request into `develop`. Pull requests never publish.
+- Package the extension with a locked `@vscode/vsce` 4.1.0 instead of fetching it at release time.
+
 ## [0.0.1] - 2026-11-09
 
 - Add a release pipeline: `npm run release` cuts `release/vX.Y.Z` from `develop`, `npm run deploy` merges it into `master` and tags it, and a push to `master` publishes `stud-X.Y.Z.vsix` as a GitHub release. The version is reset to 0.0.1.

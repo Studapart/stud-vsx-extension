@@ -3,7 +3,7 @@
   "displayName": "stud",
   "description": "Editor wrapper for stud. It can install portable stud when none is found, and it offers a side panel of stud actions. It does not call Jira, Linear, or GitLab.",
   "icon": "resources/icon.png",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "studapart",
   "license": "MIT",
   "repository": {
