@@ -115,7 +115,8 @@ function remoteRefs(origin: string): string {
 }
 
 function cutReleaseBranch(work: string): void {
-  assert.equal(runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' }).status, 0);
+  const result = runScript(work, 'cut-release.sh', [], { RELEASE_DATE: '2026-11-06' });
+  assert.equal(result.status, 0, result.stderr);
 }
 
 function readVersion(dir: string): string {
