@@ -177,6 +177,15 @@ test('release-notes refuses a version whose section has no notes', () => {
   });
 });
 
+test('release-notes refuses when the Unreleased heading is missing', () => {
+  withRepo(({ work }) => {
+    writeChangelog(work, '## [0.0.2] - 2026-11-06\n\n- Done.\n');
+    const result = runScript(work, 'release-notes.sh', ['0.0.2']);
+    assertRefused(result);
+    assert.match(result.stderr, /Unreleased/);
+  });
+});
+
 test('release-notes refuses when Unreleased still has notes', () => {
   withRepo(({ work }) => {
     writeChangelog(work, '## [Unreleased]\n\n- Pending.\n\n## [0.0.2] - 2026-11-06\n\n- Done.\n');

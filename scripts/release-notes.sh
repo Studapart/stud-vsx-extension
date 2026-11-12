@@ -19,6 +19,7 @@ version="$1"
 
 notes="$(bash scripts/changelog-section.sh CHANGELOG.md "$version")"
 [ -n "$(tr -d '[:space:]' <<< "$notes")" ] || die "CHANGELOG.md has no notes under $version"
-[ -z "$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased 2>/dev/null | tr -d '[:space:]')" ] || die "CHANGELOG.md has notes under Unreleased after the cut"
+unreleased="$(bash scripts/changelog-section.sh CHANGELOG.md Unreleased)" || die "CHANGELOG.md has no Unreleased section"
+[ -z "$(tr -d '[:space:]' <<< "$unreleased")" ] || die "CHANGELOG.md has notes under Unreleased after the cut"
 
 printf '%s\n' "$notes"
