@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-12
+
 - Build the release archive with a token that can only read repository contents. The job that creates the GitHub release runs no npm code and holds the only write token, so a compromised build dependency cannot change a release.
 - Publish a release only when its tag names the built commit. A draft release or a release that exists without its archive stops the release workflow with a message; delete the draft and re-run it.
 - Check the release notes and run the tests before `npm run deploy` pushes anything. A failed check stops the deploy with nothing pushed.
